@@ -125,28 +125,11 @@ async def process_episode(id: int, background_tasks: BackgroundTasks, skip_trans
 
 @router.post("/episodes/{id}/cancel")
 async def cancel_episode(id: int):
-    """Cancel processing and reset status."""
-    ep_repo = EpisodeRepository()
-    ep = ep_repo.get_by_id(id)
-    
-    if ep:
-        # Clean up artifacts if they exist
-        if ep.transcript_path and os.path.exists(ep.transcript_path):
-            try:
-                os.remove(ep.transcript_path)
-            except: pass
-            
-        if ep.ad_report_path and os.path.exists(ep.ad_report_path):
-            try:
-                os.remove(ep.ad_report_path)
-            except: pass
-            
-        if ep.report_path and os.path.exists(ep.report_path):
-            try:
-                os.remove(ep.report_path)
-            except: pass
-
-    ep_repo.reset_status(id)
+    """Cancel processing and reset status (Soft Delete)."""
+    proc = get_processor()
+    success = await proc.delete_episode(id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Episode not found")
     return {"status": "cancelled"}
 
 class SearchQuery(BaseModel):

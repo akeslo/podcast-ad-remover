@@ -97,6 +97,7 @@
             <!-- Hidden fields to preserve other settings -->
             <input type="hidden" name="concurrent_downloads" value="{{ settings.concurrent_downloads or 3 }}">
             <input type="hidden" name="retention_days" value="{{ settings.retention_days or 30 }}">
+            <input type="hidden" name="check_interval_minutes" value="{{ settings.check_interval_minutes or 60 }}">
             <input type="hidden" name="app_external_url" value="{{ settings.app_external_url or '' }}">
             <input type="hidden" name="enable_feed_auth" value="{% if settings.enable_feed_auth %}on{% endif %}">
             <input type="hidden" name="feed_auth_username" value="{{ settings.feed_auth_username or '' }}">
@@ -136,8 +137,8 @@
                 {% for active_user in active_users %}
                 <tr>
                     <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                        <span class="cursor-pointer hover:text-blue-600 hover:underline" 
-                              onclick="editUsername('{{ active_user.id }}', 'user', '{{ active_user.username }}')">
+                        <span class="cursor-pointer hover:text-blue-600 hover:underline"
+                            onclick="editUsername('{{ active_user.id }}', 'user', '{{ active_user.username }}')">
                             {{ active_user.username }}
                         </span>
                     </td>
@@ -236,7 +237,11 @@
             <div class="bg-blue-50 border border-blue-200 rounded p-3 mt-4">
                 <p class="text-sm font-medium text-gray-700 mb-1">Example Feed URL:</p>
                 <code id="example_feed_url" class="text-xs bg-white px-2 py-1 rounded border">
-                    https://{{ user.username }}:PASSWORD@pods.akeslo.com/feeds/SLUG.xml
+                    {% set display_url = app_base_url %}
+                    {% if not settings.app_external_url %}
+                        {% set display_url = "http://your-public-url.com" %}
+                    {% endif %}
+                    {{ display_url | replace('://', '://' + user.username + ':PASSWORD@') }}/feeds/SLUG.xml
                 </code>
             </div>
             {% endif %}
@@ -249,6 +254,7 @@
             <!-- Hidden fields to preserve other settings -->
             <input type="hidden" name="concurrent_downloads" value="{{ settings.concurrent_downloads or 3 }}">
             <input type="hidden" name="retention_days" value="{{ settings.retention_days or 30 }}">
+            <input type="hidden" name="check_interval_minutes" value="{{ settings.check_interval_minutes or 60 }}">
             <input type="hidden" name="app_external_url" value="{{ settings.app_external_url or '' }}">
             <input type="hidden" name="auth_enabled" value="{% if settings.auth_enabled %}on{% endif %}">
             <input type="hidden" name="ip_allowlist" value="{{ settings.ip_allowlist or '' }}">
@@ -294,10 +300,12 @@
             // Toggle Example URL Text
             const exampleCode = document.getElementById('example_feed_url');
             if (exampleCode) {
+                const baseUrl = "{{ app_base_url }}";
+                const user = "{{ user.username }}";
                 if (feedAuthCheckbox.checked) {
-                    exampleCode.textContent = "https://{{ user.username }}:PASSWORD@pods.akeslo.com/feeds/SLUG.xml";
+                    exampleCode.textContent = baseUrl.replace('://', `://${user}:PASSWORD@`) + "/feeds/SLUG.xml";
                 } else {
-                    exampleCode.textContent = "https://pods.akeslo.com/feeds/SLUG.xml";
+                    exampleCode.textContent = baseUrl + "/feeds/SLUG.xml";
                 }
             }
         }
@@ -337,12 +345,12 @@
                 const form = document.createElement('form');
                 form.method = 'POST';
                 form.action = type === 'user' ? `/admin/users/${id}/username` : `/admin/access-requests/${id}/username`;
-                
+
                 const input = document.createElement('input');
                 input.type = 'hidden';
                 input.name = 'username';
                 input.value = newName;
-                
+
                 form.appendChild(input);
                 document.body.appendChild(form);
                 form.submit();
@@ -371,8 +379,8 @@
                 {% for req in pending_requests %}
                 <tr>
                     <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                        <span class="cursor-pointer hover:text-blue-600 hover:underline" 
-                              onclick="editUsername('{{ req.id }}', 'request', '{{ req.username }}')">
+                        <span class="cursor-pointer hover:text-blue-600 hover:underline"
+                            onclick="editUsername('{{ req.id }}', 'request', '{{ req.username }}')">
                             {{ req.username }}
                         </span>
                     </td>

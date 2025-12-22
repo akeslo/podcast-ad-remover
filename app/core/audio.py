@@ -153,3 +153,77 @@ class AudioProcessor:
             logger.error(f"Failed to concatenate files: {e.returncode}")
             logger.error(f"FFmpeg stderr: {e.stderr}")
             raise Exception(f"FFmpeg concatenation failed: {e.stderr}") from e
+    @staticmethod
+    def prepare_for_transcription(input_path: str, output_path: str):
+        """
+        Extract a clean, normalized audio stream for transcription.
+        Uses 16kHz mono as preferred by Whisper. Removes all other streams (video, cover art).
+        """
+        logger.info(f"Preparing clean audio for transcription: {output_path}")
+        
+        # -map 0:a:0 selects ONLY the first audio stream
+        # -ar 16000 sets sample rate to 16kHz
+        # -ac 1 sets to mono
+        # -vn removes all video/attached images
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", input_path,
+            "-map", "0:a:0",
+            "-ar", "16000",
+            "-ac", "1",
+            "-vn",
+            output_path
+        ]
+        
+        try:
+            subprocess.run(cmd, capture_output=True, text=True, check=True)
+            logger.info("Normalized audio prepared.")
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Failed to prepare audio for transcription: {e.stderr}")
+            raise Exception(f"Audio preparation failed: {e.stderr}") from e
+    @staticmethod
+    def create_audio_chunks(input_path: str, chunk_duration: float, overlap: float) -> List[str]:
+        """
+        Split audio into overlapping chunks.
+        Returns list of paths to chunk files.
+        """
+        total_duration = AudioProcessor.get_duration(input_path)
+        logger.info(f"Splitting {input_path} (Total: {total_duration:.2f}s) into {chunk_duration}s chunks with {overlap}s overlap")
+        
+        chunks = []
+        start = 0.0
+        chunk_idx = 0
+        
+        while start < total_duration:
+            output_chunk = f"{input_path}.chunk_{chunk_idx:03d}.wav"
+            # ffmpeg -ss start -t duration
+            # We use a slightly longer duration to ensure we don't miss anything
+            cmd = [
+                "ffmpeg", "-y",
+                "-ss", str(start),
+                "-t", str(chunk_duration),
+                "-i", input_path,
+                "-c", "copy",
+                output_chunk
+            ]
+            
+            try:
+                subprocess.run(cmd, capture_output=True, text=True, check=True)
+                chunks.append(output_chunk)
+                logger.info(f"Created chunk {chunk_idx}: {start}s to {start + chunk_duration}s")
+            except subprocess.CalledProcessError as e:
+                logger.error(f"Failed to create chunk {chunk_idx}: {e.stderr}")
+                # Cleanup already created chunks
+                for c in chunks:
+                    if os.path.exists(c):
+                        os.remove(c)
+                raise Exception(f"Audio chunking failed: {e.stderr}") from e
+                
+            start += (chunk_duration - overlap)
+            chunk_idx += 1
+            
+            # If the remaining duration is less than the overlap, we are done
+            if start >= total_duration - overlap:
+                break
+                
+        return chunks

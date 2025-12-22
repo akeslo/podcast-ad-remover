@@ -38,6 +38,31 @@
     </div>
 </div>
 
+<style>
+    .log-startup {
+        color: #10b981;
+        font-weight: 600;
+    }
+
+    .log-shutdown {
+        color: #f59e0b;
+        font-weight: 600;
+    }
+
+    .log-error {
+        color: #ef4444;
+        font-weight: 600;
+    }
+
+    .log-warning {
+        color: #fbbf24;
+    }
+
+    .log-auth {
+        color: #8b5cf6;
+    }
+</style>
+
 <div id="log_container" class="bg-gray-900 text-gray-100 p-4 rounded font-mono text-xs overflow-auto"
     style="height: calc(100vh - 340px); min-height: 300px;">
     <pre id="log_content" class="whitespace-pre-wrap">{{ logs }}</pre>
@@ -60,6 +85,26 @@
     let countdown = refreshInterval;
     let intervalId = null;
 
+    function highlightLog(line) {
+        // Color-code important events
+        if (line.includes('Application startup') || line.includes('Started server') || line.includes('running on')) {
+            return `<span class="log-startup">${line}</span>`;
+        }
+        if (line.includes('Shutting down') || line.includes('shutdown') || line.includes('Finished server')) {
+            return `<span class="log-shutdown">${line}</span>`;
+        }
+        if (line.includes('ERROR')) {
+            return `<span class="log-error">${line}</span>`;
+        }
+        if (line.includes('WARNING')) {
+            return `<span class="log-warning">${line}</span>`;
+        }
+        if (line.includes('AUTH')) {
+            return `<span class="log-auth">${line}</span>`;
+        }
+        return line;
+    }
+
     function filterLogs() {
         const filterText = filterInput.value.toLowerCase();
         const level = levelSelect.value;
@@ -71,7 +116,8 @@
             return true;
         });
 
-        logContent.textContent = filtered.join('\n');
+        const highlighted = filtered.map(highlightLog).join('\n');
+        logContent.innerHTML = highlighted;
     }
 
     function scrollToBottom() {
@@ -131,6 +177,7 @@
     if (autoRefreshCheckbox.checked) {
         startAutoRefresh();
     }
+    filterLogs();  // Apply highlighting on initial load
     scrollToBottom();
 </script>
 {% endblock %}

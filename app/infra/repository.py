@@ -222,7 +222,7 @@ class EpisodeRepository:
                 conn.execute("""
                     UPDATE episodes 
                     SET status = ? 
-                    WHERE subscription_id = ? AND guid = ? AND (status = ? or status = 'failed' or status = 'pending_manual')
+                    WHERE subscription_id = ? AND guid = ? AND (status = ? or status = 'pending_manual')
                 """, (status, subscription_id, guid, condition_status))
             else:
                 conn.execute("""
@@ -235,4 +235,20 @@ class EpisodeRepository:
     def delete(self, id: int):
         with get_db_connection() as conn:
             conn.execute("DELETE FROM episodes WHERE id = ?", (id,))
+            conn.commit()
+
+    def soft_delete(self, id: int):
+        """Mark episode as ignored and clear paths to free space."""
+        with get_db_connection() as conn:
+            conn.execute("""
+                UPDATE episodes 
+                SET status = 'ignored',
+                    local_filename = NULL,
+                    transcript_path = NULL,
+                    ad_report_path = NULL,
+                    report_path = NULL,
+                    progress = 0,
+                    processing_step = NULL
+                WHERE id = ?
+            """, (id,))
             conn.commit()

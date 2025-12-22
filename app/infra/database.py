@@ -217,7 +217,20 @@ Transcript Context: {transcript_context}""",))
         "ALTER TABLE subscriptions ADD COLUMN retention_days INTEGER DEFAULT 30",
         "ALTER TABLE subscriptions ADD COLUMN manual_retention_days INTEGER DEFAULT 14",
         "ALTER TABLE subscriptions ADD COLUMN retention_limit INTEGER DEFAULT 1",
-        "ALTER TABLE app_settings ADD COLUMN check_interval_minutes INTEGER DEFAULT 60"
+        "ALTER TABLE app_settings ADD COLUMN check_interval_minutes INTEGER DEFAULT 60",
+        
+        # Global Subscription Defaults
+        "ALTER TABLE app_settings ADD COLUMN default_remove_ads INTEGER DEFAULT 1",
+        "ALTER TABLE app_settings ADD COLUMN default_remove_promos INTEGER DEFAULT 1",
+        "ALTER TABLE app_settings ADD COLUMN default_remove_intros INTEGER DEFAULT 0",
+        "ALTER TABLE app_settings ADD COLUMN default_remove_outros INTEGER DEFAULT 0",
+        "ALTER TABLE app_settings ADD COLUMN default_ai_rewrite_description INTEGER DEFAULT 0",
+        "ALTER TABLE app_settings ADD COLUMN default_ai_audio_summary INTEGER DEFAULT 0",
+        "ALTER TABLE app_settings ADD COLUMN default_append_title_intro INTEGER DEFAULT 0",
+        "ALTER TABLE app_settings ADD COLUMN default_retention_limit INTEGER DEFAULT 1",
+        "ALTER TABLE app_settings ADD COLUMN default_retention_days INTEGER DEFAULT 30",
+        "ALTER TABLE app_settings ADD COLUMN default_manual_retention_days INTEGER DEFAULT 14",
+        "ALTER TABLE app_settings ADD COLUMN default_custom_instructions TEXT"
     ]
     
     for sql in migrations:
@@ -234,6 +247,10 @@ def get_db_connection():
     """Get a database connection."""
     conn = sqlite3.connect(settings.DB_PATH)
     conn.row_factory = sqlite3.Row
+    # Enable WAL mode for better concurrency
+    conn.execute("PRAGMA journal_mode=WAL")
+    # Set a busy timeout to avoid 'database is locked' errors during heavy processing
+    conn.execute("PRAGMA busy_timeout=5000")
     try:
         yield conn
     finally:

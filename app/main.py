@@ -52,14 +52,56 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("Database file not found!")
     
-    # Start background scheduler
-    processor = Processor()
-    asyncio.create_task(processor.run_loop())
+    # Auto-populate Public Application URL with detected IP if not set
+    try:
+        from app.infra.database import get_db_connection
+        import socket
+        
+        with get_db_connection() as conn:
+            row = conn.execute("SELECT app_external_url FROM app_settings WHERE id = 1").fetchone()
+            current_url = row['app_external_url'] if row else None
+            
+            if not current_url:
+                # Detect IP
+                try:
+                    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    s.connect(("8.8.8.8", 80))
+                    lan_ip = s.getsockname()[0]
+                    s.close()
+                    
+                    if lan_ip:
+                        final_url = f"http://{lan_ip}:{settings.PORT}"
+                        logger.info(f"Auto-configuring Public Application URL to: {final_url}")
+                        conn.execute("UPDATE app_settings SET app_external_url = ? WHERE id = 1", (final_url,))
+                        conn.commit()
+                except Exception as e:
+                    logger.warning(f"Could not auto-detect LAN IP: {e}")
+    except Exception as e:
+        logger.error(f"Error checking/updating app settings on startup: {e}")
+    
+    # Start background scheduler in a separate process
+    from app.core.processor import start_processor_process
+    import multiprocessing
+    
+    # Use spawn start method for consistency across platforms (especially Mac)
+    try:
+        multiprocessing.set_start_method('spawn', force=True)
+    except RuntimeError:
+        pass
+        
+    p = multiprocessing.Process(target=start_processor_process, name="PodcastProcessor", daemon=True)
+    p.start()
+    app.state.processor_process = p
+    logger.info(f"Background processor started in separate process (PID: {p.pid})")
     
     yield
     
     # Shutdown
     logger.info("Shutting down...")
+    if hasattr(app.state, "processor_process"):
+        logger.info("Stopping background processor...")
+        app.state.processor_process.terminate()
+        app.state.processor_process.join(timeout=5)
 
 from app.api import subscriptions
 from app.web import router as web_router

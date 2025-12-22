@@ -101,21 +101,28 @@ def get_global_settings():
             return dict(row)
     return {}
 
-def generate_rss_links(request: Request, sub, global_settings: dict, user_obj=None):
-    """Consolidated logic for generating RSS links with optional auth injection."""
-    # Use explicit base URL if configured, otherwise use request base
+def get_app_base_url(request: Request, global_settings: dict) -> str:
+    """Consolidated logic for getting the application base URL."""
     external_url = global_settings.get("app_external_url")
     
-    if external_url:
-        base_url = external_url.rstrip("/")
-    else:
-        base_url = str(request.base_url).rstrip("/")
-        # If accessing via localhost/127.0.0.1, try to use the LAN IP 
-        if "localhost" in base_url or "127.0.0.1" in base_url:
-            lan_ip = get_lan_ip()
-            if lan_ip != "localhost":
-                import re
-                base_url = re.sub(r"(https?://)(localhost|127\.0\.0\.1)", rf"\1{lan_ip}", base_url)
+    if external_url and external_url.strip():
+        return external_url.rstrip("/")
+    
+    # If no external URL is configured, PREFER the LAN IP address.
+    # This prevents the app from mirroring the browser's domain (e.g. pods.akeslo.com)
+    # when the user wants to use direct IP links for RSS feeds.
+    lan_ip = get_lan_ip()
+    
+    if lan_ip and lan_ip != "localhost":
+        from app.core.config import settings
+        return f"http://{lan_ip}:{settings.PORT}"
+
+    # Fallback to request URL only if we can't determine a valid LAN IP
+    return str(request.base_url).rstrip("/")
+
+def generate_rss_links(request: Request, sub, global_settings: dict, user_obj=None):
+    """Consolidated logic for generating RSS links with optional auth injection."""
+    base_url = get_app_base_url(request, global_settings)
     
     rss_url = f"{base_url}/feeds/{sub.slug}.xml"
     
@@ -348,8 +355,9 @@ async def update_system_settings(
         
         # Check if auth is being enabled for the first time
         if auth_enabled and (not current_settings or not current_settings['auth_enabled']):
-            # Check if admin user exists
-            admin_exists = conn.execute("SELECT COUNT(*) as count FROM users WHERE username = 'admin'").fetchone()['count']
+            # Check if ANY admin user exists (regardless of username)
+            # This prevents re-creating 'admin' if the user renamed their account
+            admin_exists = conn.execute("SELECT COUNT(*) as count FROM users WHERE is_admin = 1").fetchone()['count']
             
             if not admin_exists:
                 # Create admin user with random password
@@ -366,6 +374,10 @@ async def update_system_settings(
                     "UPDATE app_settings SET initial_password = ?, require_password_change = 1 WHERE id = 1",
                     (initial_password,)
                 )
+        
+        # Check if app_external_url is changing
+        old_url = conn.execute("SELECT app_external_url FROM app_settings WHERE id = 1").fetchone()
+        url_changed = old_url and old_url['app_external_url'] != app_external_url
         
         # Update settings
         conn.execute("""
@@ -387,7 +399,27 @@ async def update_system_settings(
               hashed_feed_password if hashed_feed_password else None))
         conn.commit()
     
-    url = redirect_to if redirect_to else "/admin/system"
+    # Regenerate all feeds if the URL changed
+    if url_changed:
+        try:
+            from app.core.rss_gen import RSSGenerator
+            logger.info(f"Public URL changed to '{app_external_url}', regenerating all RSS feeds...")
+            rss_gen = RSSGenerator()
+            
+            # Get all subscriptions
+            from app.infra.repository import SubscriptionRepository
+            sub_repo = SubscriptionRepository()
+            subs = sub_repo.get_all()
+            
+            for sub in subs:
+                rss_gen.generate_feed(sub.id)
+            rss_gen.generate_unified_feed()
+            
+            logger.info(f"Successfully regenerated {len(subs) + 1} feeds with new URL.")
+        except Exception as e:
+            logger.error(f"Failed to regenerate feeds after URL change: {e}")
+    
+    url = redirect_to if redirect_to else "/admin/system?success=System+settings+updated"
     return RedirectResponse(url=url, status_code=status.HTTP_303_SEE_OTHER)
 
 # --- Admin: AI ---
@@ -615,8 +647,10 @@ async def admin_queue(request: Request):
 
 @router.post("/admin/queue/cancel/{episode_id}")
 async def cancel_episode(episode_id: int):
-    # Set status to unprocessed -> Processor will detect this change and abort
-    ep_repo.reset_status(episode_id)
+    # Soft delete an episode (marks as ignored, cleans up files)
+    from app.core.processor import Processor
+    proc = Processor()
+    await proc.delete_episode(episode_id)
     return RedirectResponse(url="/admin/queue", status_code=303)
 
 @router.post("/admin/queue/retry/{episode_id}")
@@ -647,7 +681,20 @@ async def manual_download_episode(episode_id: int, request: Request, background_
     processor = Processor()
     background_tasks.add_task(processor.process_episode, episode_id)
     
+    # Regenerate feeds immediately
+    # We need to find the subscription_id for this episode
+    with get_db_connection() as conn:
+        ep = conn.execute("SELECT subscription_id FROM episodes WHERE id=?", (episode_id,)).fetchone()
+        if ep:
+            sub_id = ep['subscription_id']
+            # We use background tasks for regeneration too to not block the redirect
+            from app.core.rss_gen import RSSGenerator
+            rss_gen = RSSGenerator()
+            background_tasks.add_task(rss_gen.generate_feed, sub_id)
+            background_tasks.add_task(rss_gen.generate_unified_feed)
+    
     return RedirectResponse(url=request.headers.get("referer") or "/", status_code=303)
+
 
 # --- Admin: Logs ---
 @router.get("/admin/logs", response_class=HTMLResponse)
@@ -733,6 +780,7 @@ async def admin_access(request: Request):
         "user": user,
         "active_tab": "access",
         "settings": settings,
+        "app_base_url": get_app_base_url(request, settings),
         "pending_requests": [dict(row) for row in pending_requests],
         "active_users": [dict(row) for row in active_users],
         "login_history": [dict(row) for row in login_history],
@@ -860,6 +908,8 @@ async def update_request_username(request: Request, request_id: int, username: s
 
 # Helper to render index with consistent data
 def _render_index(request: Request, error: str = None):
+    from app.infra.repository import SubscriptionRepository
+    sub_repo = SubscriptionRepository()
     subs = sub_repo.get_all()
     
     # Calculate stats
@@ -941,17 +991,8 @@ def _render_index(request: Request, error: str = None):
     # Generate Unified Links if subscriptions exist
     unified_links = None
     if subs:
-        # Determine Base URL
-        external_url = global_settings.get("app_external_url")
-        if external_url:
-            base_url = external_url.rstrip("/")
-        else:
-            base_url = str(request.base_url).rstrip("/")
-            if "localhost" in base_url or "127.0.0.1" in base_url:
-                lan_ip = get_lan_ip()
-                if lan_ip != "localhost":
-                    import re
-                    base_url = re.sub(r"(https?://)(localhost|127\.0\.0\.1)", rf"\1{lan_ip}", base_url)
+        # Determine Base URL using consolidated logic
+        base_url = get_app_base_url(request, global_settings)
         
         rss_url = f"{base_url}/feed/unified.xml"
         
@@ -994,7 +1035,8 @@ def _render_index(request: Request, error: str = None):
         "error": error,
         "config_warning": config_warning,
         "queue": queue,
-        "unified_links": unified_links
+        "unified_links": unified_links,
+        "settings": global_settings
     })
 
 @router.get("/", response_class=HTMLResponse)
@@ -1002,6 +1044,62 @@ async def index(request: Request):
     return _render_index(request)
 
 from app.core.processor import Processor
+
+# --- Admin: Global Subscription Settings ---
+@router.get("/admin/global-subscription-settings", response_class=HTMLResponse)
+async def admin_global_subscription_settings(request: Request):
+    user = get_current_user(request)
+    
+    with get_db_connection() as conn:
+        settings_row = conn.execute("SELECT * FROM app_settings WHERE id = 1").fetchone()
+        
+    return templates.TemplateResponse("admin/global_subscription_settings.html", {
+        "request": request,
+        "user": user,
+        "settings": settings_row,
+        "active_tab": "global_subs"
+    })
+
+@router.post("/admin/global-subscription-settings/update")
+async def update_global_subscription_settings(
+    request: Request,
+    default_remove_ads: bool = Form(False),
+    default_remove_promos: bool = Form(False),
+    default_remove_intros: bool = Form(False),
+    default_remove_outros: bool = Form(False),
+    default_ai_rewrite_description: bool = Form(False),
+    default_ai_audio_summary: bool = Form(False),
+    default_append_title_intro: bool = Form(False),
+    default_retention_limit: int = Form(1),
+    default_retention_days: int = Form(30),
+    default_manual_retention_days: int = Form(14),
+    default_custom_instructions: str = Form(None)
+):
+    with get_db_connection() as conn:
+        conn.execute("""
+            UPDATE app_settings 
+            SET default_remove_ads = ?, 
+                default_remove_promos = ?, 
+                default_remove_intros = ?, 
+                default_remove_outros = ?, 
+                default_ai_rewrite_description = ?,
+                default_ai_audio_summary = ?, 
+                default_append_title_intro = ?,
+                default_retention_limit = ?,
+                default_retention_days = ?,
+                default_manual_retention_days = ?,
+                default_custom_instructions = ?
+            WHERE id = 1
+        """, (
+            default_remove_ads, default_remove_promos, default_remove_intros, default_remove_outros,
+            default_ai_rewrite_description, default_ai_audio_summary, default_append_title_intro,
+            default_retention_limit, default_retention_days, default_manual_retention_days,
+            default_custom_instructions
+        ))
+        conn.commit()
+        
+    return RedirectResponse(url="/admin/global-subscription-settings?success=Settings updated", status_code=303)
+
 
 @router.post("/add", response_class=HTMLResponse)
 async def add_subscription(request: Request, background_tasks: BackgroundTasks, feed_url: str = Form(...), initial_count: int = Form(1)):
@@ -1011,9 +1109,44 @@ async def add_subscription(request: Request, background_tasks: BackgroundTasks, 
         if existing:
             return _render_index(request, error="Subscription already exists")
         
-        # Create subscription with placeholder data - will be updated in background
+        # Create subscription with placeholder data
+        # Fetch global defaults first
+        with get_db_connection() as conn:
+            app_settings = conn.execute("SELECT * FROM app_settings WHERE id = 1").fetchone()
+            
+        retention_limit = app_settings['default_retention_limit'] if app_settings['default_retention_limit'] is not None else initial_count
+        
+        # Override initial_count if user didn't explicitly change it? 
+        # Actually user input 'initial_count' (which is technically retention limit in UI) should take precedence if exposed in UI,
+        # but the request asks "when a user first hits a podcast, this would be what it defaults to".
+        # The UI 'initial_count' field might be "Keep Latest 1". 
+        # If the user selects something specific in the add form, that should prob win. 
+        # If default is 1, and user sends 1, effectively it's the same.
+        # But wait, usually 'Add Subscription' form is simple URL input. The 'initial_count' is likely hidden or default '1'.
+        # Let's use the global default for retention if provided, or fallback to the form default.
+        if 'default_retention_limit' in app_settings.keys() and app_settings['default_retention_limit'] is not None:
+             retention_limit = app_settings['default_retention_limit']
+        
         sub_create = SubscriptionCreate(feed_url=feed_url)
-        new_sub = sub_repo.create(sub_create, "Loading...", f"loading-{int(__import__('time').time())}", None, "Fetching feed information...", retention_limit=initial_count)
+        new_sub = sub_repo.create(sub_create, "Loading...", f"loading-{int(__import__('time').time())}", None, "Fetching feed information...", retention_limit=retention_limit)
+        
+        # Apply other global defaults immediately
+        sub_repo.update_settings(
+            new_sub.id,
+            remove_ads=bool(app_settings['default_remove_ads']),
+            remove_promos=bool(app_settings['default_remove_promos']),
+            remove_intros=bool(app_settings['default_remove_intros']),
+            remove_outros=bool(app_settings['default_remove_outros']),
+            custom_instructions=app_settings['default_custom_instructions'],
+            append_summary=bool(app_settings['default_ai_audio_summary']), # Mapped correctly? Yes
+            append_title_intro=bool(app_settings['default_append_title_intro']),
+            ai_rewrite_description=bool(app_settings['default_ai_rewrite_description']),
+            ai_audio_summary=bool(app_settings['default_ai_audio_summary']),
+            retention_days=app_settings['default_retention_days'] or 30,
+            manual_retention_days=app_settings['default_manual_retention_days'] or 14,
+            retention_limit=retention_limit
+        )
+
         
         # All heavy lifting happens in background
         async def setup_subscription(sub_id: int, url: str, limit: int):
@@ -1026,6 +1159,7 @@ async def add_subscription(request: Request, background_tasks: BackgroundTasks, 
                 title, slug, image_url, description = FeedManager.parse_feed(url)
                 
                 # Update subscription with real data
+                # Keep the settings we just set! Only update metadata.
                 with get_db_connection() as conn:
                     conn.execute("""
                         UPDATE subscriptions 
@@ -1042,7 +1176,7 @@ async def add_subscription(request: Request, background_tasks: BackgroundTasks, 
             except Exception as e:
                 logger.error(f"Error setting up subscription {sub_id}: {e}")
         
-        background_tasks.add_task(setup_subscription, new_sub.id, feed_url, initial_count)
+        background_tasks.add_task(setup_subscription, new_sub.id, feed_url, retention_limit)
         
         return RedirectResponse(url="/", status_code=303)
     except Exception as e:

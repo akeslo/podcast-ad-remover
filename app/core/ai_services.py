@@ -1,4 +1,4 @@
-import whisper
+import faster_whisper
 from google import genai
 import json
 import logging
@@ -9,43 +9,6 @@ from typing import List, Dict
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
-
-class LogRedirector:
-    """Context manager to redirect stdout/stderr to a logger with buffering."""
-    def __init__(self, logger, level=logging.INFO, line_callback=None):
-        self.logger = logger
-        self.level = level
-        self.line_callback = line_callback
-        self._stdout = sys.stdout
-        self._buf = ""
-
-    def write(self, buf):
-        self._buf += buf
-        if "\n" in self._buf:
-            lines = self._buf.split("\n")
-            # All but the last one are complete lines
-            for line in lines[:-1]:
-                if line.strip():
-                    self.logger.log(self.level, line.rstrip())
-                    if self.line_callback:
-                        self.line_callback(line)
-            # The last one is a partial line (or empty if ended with newline)
-            self._buf = lines[-1]
-
-    def flush(self):
-        if self._buf.strip():
-            self.logger.log(self.level, self._buf.rstrip())
-            if self.line_callback:
-                self.line_callback(self._buf)
-            self._buf = ""
-
-    def __enter__(self):
-        sys.stdout = self
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.flush()
-        sys.stdout = self._stdout
 
 class Transcriber:
     def __init__(self):
@@ -64,44 +27,189 @@ class Transcriber:
             except Exception as e:
                 logger.warning(f"Failed to fetch whisper setting, using default: {e}")
                 
-            logger.info(f"Loading Whisper model: {idx} (Download Root: {settings.MODELS_DIR})")
+            # Use float32 for maximum compatibility and stability on CPU (especially ARM64)
+            compute_type = "float32"
+            logger.info(f"Loading Faster-Whisper model: {idx} (Download Root: {settings.MODELS_DIR})")
+            logger.info(f"Using {compute_type} compute type for optimization.")
+            
             import time
             start_load = time.time()
-            self.model = whisper.load_model(idx, download_root=settings.MODELS_DIR)
+            
+            # Use float32 for stability
+            self.model = faster_whisper.WhisperModel(
+                idx, 
+                device="cpu", 
+                compute_type=compute_type, 
+                download_root=settings.MODELS_DIR
+            )
+            
             load_duration = time.time() - start_load
             logger.info(f"Model loaded in {load_duration:.2f}s")
 
     def transcribe(self, audio_path: str, progress_callback=None) -> Dict:
         from app.core.audio import AudioProcessor
-        import re
         
         self.load_model()
         
+        # Get total duration for progress calculation
         audio_duration = AudioProcessor.get_duration(audio_path)
         logger.info(f"Transcribing {audio_path} (Duration: {audio_duration:.2f}s)...")
         
-        # Regex to match whisper timestamps: [00:00.000 --> 00:07.640] or [01:00:00.000 --> 01:00:05.000]
-        # Matches the 'end' timestamp to track progress. Handles optional HH: prefix.
-        ts_regex = re.compile(r"\[.* --> (?:(\d+):)?(\d{2}):(\d{2})\.\d{3}\]")
-        
-        def on_line(line):
-            if progress_callback:
-                match = ts_regex.search(line)
-                if match:
-                    # groups: (hours, mins, secs) - hours is optional (None if not present)
-                    h, m, s = match.groups()
-                    current_seconds = int(h or 0) * 3600 + int(m) * 60 + int(s)
-                    progress_callback(current_seconds, audio_duration)
-
-        # verbose=True prints to stdout, which we now capture via LogRedirector
-        with LogRedirector(logger, line_callback=on_line):
-            result = self.model.transcribe(audio_path, verbose=True)
+        # Determine if we should use chunked transcription
+        # Threshold: 20 minutes (1200 seconds)
+        chunk_threshold = 1200.0
+        if audio_duration > chunk_threshold:
+            logger.info("File exceeds duration threshold. Using chunked transcription.")
+            return self._transcribe_chunked(audio_path, audio_duration, progress_callback)
             
-        segments_count = len(result.get("segments", []))
-        language = result.get("language", "unknown")
-        logger.info(f"Transcription complete. Found {segments_count} segments. Language: {language}")
+        # Prepare clean audio for transcription to avoid crashes with multi-stream files (MJPEG etc)
+        # We use a temporary file for the clean audio
+        clean_audio_path = audio_path + ".clean.wav"
+        AudioProcessor.prepare_for_transcription(audio_path, clean_audio_path)
         
-        return result
+        try:
+            # faster-whisper returns a generator
+            # We transcribe the CLEAN audio path
+            segments_generator, info = self.model.transcribe(
+                clean_audio_path, 
+                beam_size=5
+            )
+            
+            logger.info(f"Detected language: {info.language} with probability {info.language_probability}")
+            
+            segments_result = []
+            
+            # Helper to convert segment to dict
+            def segment_to_dict(seg):
+                return {
+                    "id": seg.id,
+                    "seek": seg.seek,
+                    "start": seg.start,
+                    "end": seg.end,
+                    "text": seg.text,
+                    "tokens": seg.tokens,
+                    "temperature": seg.temperature,
+                    "avg_logprob": seg.avg_logprob,
+                    "compression_ratio": seg.compression_ratio,
+                    "no_speech_prob": seg.no_speech_prob
+                }
+
+            # Iterate generator
+            for segment in segments_generator:
+                if progress_callback:
+                    # Progress based on segment end time
+                    progress_callback(segment.end, audio_duration)
+                
+                # logger.info(f"Segment: {segment.start:.2f}s - {segment.end:.2f}s")
+                segments_result.append(segment_to_dict(segment))
+                
+            result = {
+                "text": "".join([s['text'] for s in segments_result]),
+                "segments": segments_result,
+                "language": info.language
+            }
+                
+            logger.info(f"Transcription complete. Found {len(segments_result)} segments.")
+            
+            return result
+        finally:
+            # Clean up temporary audio file
+            if os.path.exists(clean_audio_path):
+                try:
+                    os.remove(clean_audio_path)
+                    logger.info("Cleaned up temporary transcription audio.")
+                except Exception as e:
+                    logger.warning(f"Failed to cleanup temp audio: {e}")
+
+    def _transcribe_chunked(self, audio_path: str, total_duration: float, progress_callback=None) -> Dict:
+        from app.core.audio import AudioProcessor
+        
+        # Chunk settings
+        chunk_duration = 1200.0 # 20 mins
+        overlap = 20.0 # 20s overlap
+        
+        # Stage 1: Normalize original audio (same as single file logic)
+        clean_audio_path = audio_path + ".clean.wav"
+        AudioProcessor.prepare_for_transcription(audio_path, clean_audio_path)
+        
+        chunk_paths = []
+        try:
+            # Stage 2: Create chunks
+            chunk_paths = AudioProcessor.create_audio_chunks(clean_audio_path, chunk_duration, overlap)
+            logger.info(f"Created {len(chunk_paths)} chunks for processing.")
+            
+            all_segments = []
+            
+            # Stage 3: Process each chunk
+            for i, chunk_path in enumerate(chunk_paths):
+                logger.info(f"Processing chunk {i+1}/{len(chunk_paths)}: {chunk_path}")
+                
+                # Global start time for this chunk
+                # Start: (n) * (C - O)
+                global_start_time = i * (chunk_duration - overlap)
+                
+                # Define merge boundaries for this chunk
+                # We keep segments that START within [Boundary-Start, Boundary-End]
+                # Boundary-Start: global_start_time + overlap/2 (except first chunk)
+                # Boundary-End: global_start_time + chunk_duration - overlap/2 (except last chunk)
+                
+                merge_start = global_start_time + (overlap / 2.0) if i > 0 else 0.0
+                merge_end = global_start_time + chunk_duration - (overlap / 2.0) if i < (len(chunk_paths) - 1) else total_duration + 1.0
+                
+                logger.debug(f"Chunk {i} boundaries: {merge_start:.2f}s to {merge_end:.2f}s")
+                
+                # Transcribe chunk
+                segments_generator, info = self.model.transcribe(chunk_path, beam_size=5)
+                
+                chunk_segments_count = 0
+                for segment in segments_generator:
+                    # Globalize segment timestamps
+                    seg_start = segment.start + global_start_time
+                    seg_end = segment.end + global_start_time
+                    
+                    # Filter based on merge boundaries
+                    if seg_start >= merge_start and seg_start < merge_end:
+                        # Convert to dict and update timestamps
+                        seg_dict = {
+                            "id": len(all_segments), # New ID for merged list
+                            "seek": segment.seek, # seek is relative to chunk, maybe not useful merged
+                            "start": seg_start,
+                            "end": seg_end,
+                            "text": segment.text,
+                            "tokens": segment.tokens,
+                            "temperature": segment.temperature,
+                            "avg_logprob": segment.avg_logprob,
+                            "compression_ratio": segment.compression_ratio,
+                            "no_speech_prob": segment.no_speech_prob
+                        }
+                        all_segments.append(seg_dict)
+                        chunk_segments_count += 1
+                        
+                        # Trigger overall progress callback
+                        if progress_callback:
+                            progress_callback(seg_end, total_duration)
+                            
+                logger.info(f"Chunk {i} complete. Added {chunk_segments_count} segments.")
+                
+            # Final result
+            result = {
+                "text": "".join([s['text'] for s in all_segments]),
+                "segments": all_segments,
+                "language": "en" # Default or detected from first chunk?
+            }
+            
+            logger.info(f"Chunked transcription complete. Found {len(all_segments)} total segments.")
+            return result
+            
+        finally:
+            # Cleanup chunks and normalized file
+            for p in chunk_paths:
+                if os.path.exists(p):
+                    os.remove(p)
+            if os.path.exists(clean_audio_path):
+                os.remove(clean_audio_path)
+            logger.info("Cleaned up temporary chunk files.")
+
 
 class LLMProvider:
     def generate(self, prompt: str) -> str:

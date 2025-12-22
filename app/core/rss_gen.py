@@ -1,4 +1,5 @@
 import os
+import logging
 from datetime import datetime
 from email.utils import format_datetime
 from xml.etree.ElementTree import Element, SubElement, tostring
@@ -6,6 +7,8 @@ from xml.dom import minidom
 import html
 from app.core.config import settings
 from app.infra.repository import SubscriptionRepository, EpisodeRepository
+
+logger = logging.getLogger(__name__)
 
 class RSSGenerator:
     def __init__(self):
@@ -21,14 +24,19 @@ class RSSGenerator:
         from app.web.router import get_global_settings, get_lan_ip
         global_settings = get_global_settings()
         external_url = global_settings.get("app_external_url")
-        base_url = external_url.rstrip("/") if external_url else settings.BASE_URL.rstrip("/")
         
-        # Fallback to LAN IP if localhost is used and we are not in a request context (background)
-        if "localhost" in base_url or "127.0.0.1" in base_url:
-            lan_ip = get_lan_ip()
-            if lan_ip != "localhost":
-                import re
-                base_url = re.sub(r"(https?://)(localhost|127\.0\.0\.1)", rf"\1{lan_ip}", base_url)
+        # Use placeholder if no external URL is set
+        if external_url and external_url.strip():
+            base_url = external_url.rstrip("/")
+        else:
+            # Check if we're on localhost and can use LAN IP
+            base_url = settings.BASE_URL.rstrip("/")
+            if "localhost" in base_url or "127.0.0.1" in base_url:
+                lan_ip = get_lan_ip()
+                if lan_ip and lan_ip != "localhost":
+                    import re
+                    # Use \g<1> to avoid ambiguity when lan_ip starts with digits (e.g. "192" would be interpreted as \1192)
+                    base_url = re.sub(r"(https?://)(localhost|127\.0\.0\.1)", rf"\g<1>{lan_ip}", base_url)
 
         # Get processed episodes
         # TODO: Add get_processed_by_subscription to EpisodeRepository
@@ -109,9 +117,12 @@ class RSSGenerator:
             desc_element = SubElement(item, 'description')
             desc_element.text = f"<![CDATA[{clean_description}]]>"
 
-        # Save to file and manually unescape the CDATA markers 
-        # (ElementTree escapes the brackets, so we need to fix them)
-        xml_str = minidom.parseString(tostring(rss)).toprettyxml(indent="  ")
+
+
+        # Save to file - use basic tostring to avoid minidom.toprettyxml() URL corruption bug
+        # minidom.toprettyxml() has a bug that corrupts URLs like "http://192" into "O2"
+        xml_str = tostring(rss, encoding='unicode')
+        xml_str = '<?xml version="1.0" encoding="UTF-8"?>\n' + xml_str
         xml_str = xml_str.replace('&lt;![CDATA[', '<![CDATA[').replace(']]&gt;', ']]>')
         
         output_path = os.path.join(settings.FEEDS_DIR, f"{sub.slug}.xml")
@@ -128,13 +139,21 @@ class RSSGenerator:
         from app.web.router import get_global_settings, get_lan_ip
         global_settings = get_global_settings()
         external_url = global_settings.get("app_external_url")
-        base_url = external_url.rstrip("/") if external_url else settings.BASE_URL.rstrip("/")
         
-        if "localhost" in base_url or "127.0.0.1" in base_url:
-            lan_ip = get_lan_ip()
-            if lan_ip != "localhost":
-                import re
-                base_url = re.sub(r"(https?://)(localhost|127\.0\.0\.1)", rf"\1{lan_ip}", base_url)
+        #  Use placeholder if no external URL is set
+        if external_url and external_url.strip():
+            base_url = external_url.rstrip("/")
+        else:
+            # Check if we're on localhost and can use LAN IP
+            base_url = settings.BASE_URL.rstrip("/")
+            if "localhost" in base_url or "127.0.0.1" in base_url:
+                lan_ip = get_lan_ip()
+                if lan_ip and lan_ip != "localhost":
+                    import re
+                    # Use \g<1> to avoid ambiguity when lan_ip starts with digits (e.g. "192" would be interpreted as \1192)
+                    base_url = re.sub(r"(https?://)(localhost|127\.0\.0\.1)", rf"\g<1>{lan_ip}", base_url)
+        
+        logger.info(f"[DEBUG] Unified feed base_url: '{base_url}' (len={len(base_url)})")
 
         # Query all completed episodes with subscription info
         from app.infra.database import get_db_connection
@@ -204,8 +223,10 @@ class RSSGenerator:
             desc_element = SubElement(item, 'description')
             desc_element.text = f"<![CDATA[{clean_description}]]>"
 
-        # Save to file and manually unescape the CDATA markers
-        xml_str = minidom.parseString(tostring(rss)).toprettyxml(indent="  ")
+        # Save to file - use basic tostring to avoid minidom.toprettyxml() URL corruption bug
+        # minidom.toprettyxml() has a bug that corrupts URLs like "http://192" into "O2"
+        xml_str = tostring(rss, encoding='unicode')
+        xml_str = '<?xml version="1.0" encoding="UTF-8"?>\n' + xml_str
         xml_str = xml_str.replace('&lt;![CDATA[', '<![CDATA[').replace(']]&gt;', ']]>')
         
         output_path = os.path.join(settings.FEEDS_DIR, "unified.xml")

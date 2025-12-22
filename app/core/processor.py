@@ -35,9 +35,10 @@ class Processor:
             
         for sub in subs:
             try:
-                # Use subscription limit if set, else default
-                actual_limit = sub.retention_limit if sub.retention_limit is not None and sub.retention_limit > 0 else limit
-                logger.info(f"Checking {sub.title} (Limit: {actual_limit})...")
+                # Use subscription limit if set, else default. 
+                # Limit of 0 is valid (means skip initial downloads)
+                actual_limit = sub.retention_limit if sub.retention_limit is not None else limit
+                logger.info(f"Checking {sub.title} (Sub Limit: {sub.retention_limit}, Ref Limit: {limit}, Final Limit: {actual_limit})...")
 
                 # Fetch ALL episodes
                 episodes = FeedManager.parse_episodes(sub.feed_url)
@@ -98,8 +99,13 @@ class Processor:
             except Exception as e:
                 logger.warning(f"Failed to delete episode directory {episode_dir}: {e}")
 
-        # Delete from DB
-        self.ep_repo.delete(episode_id)
+        # Soft delete from DB (marks as ignored, keeps GUID to prevent re-download)
+        self.ep_repo.soft_delete(episode_id)
+
+        # Regenerate feeds immediately so the episode is removed
+        self.rss_gen.generate_feed(sub.id)
+        self.rss_gen.generate_unified_feed()
+        
         return True
 
     def _extract_text(self, start: float, end: float, segments: list) -> str:
@@ -109,6 +115,18 @@ class Processor:
             if seg['start'] < end and seg['end'] > start:
                 text.append(seg['text'])
         return " ".join(text).strip()
+    
+    async def regenerate_all_feeds(self):
+        """Regenerate all RSS feeds to ensure they use current base URL."""
+        logger.info("Regenerating all RSS feeds...")
+        try:
+            subs = self.sub_repo.get_all()
+            for sub in subs:
+                self.rss_gen.generate_feed(sub.id)
+            self.rss_gen.generate_unified_feed()
+            logger.info(f"Successfully regenerated {len(subs) + 1} feeds.")
+        except Exception as e:
+            logger.error(f"Failed to regenerate feeds: {e}")
 
     async def process_queue(self):
         """Process pending episodes sequentially."""
@@ -135,7 +153,7 @@ class Processor:
                     self.ep_repo.update_status(ep.id, "processing")
                     self.ep_repo.update_progress(ep.id, "Actively Processing", 0)
                     
-                    if not self._check_cancellation(ep): break
+                    if not self._check_cancellation(ep): continue
 
                     self.ep_repo.update_progress(ep.id, "processing", 10)
                     
@@ -177,7 +195,7 @@ class Processor:
                     
                     # 1. Ensure Audio Exists (Download if missing)
                     if not os.path.exists(input_path):
-                        if not self._check_cancellation(ep): break
+                        if not self._check_cancellation(ep): continue
                         
                         logger.info(f"Downloading {ep.title}...")
                         
@@ -196,7 +214,7 @@ class Processor:
                                         
                                         # Periodic cancellation check (Time-based + Percent-based)
                                         if (datetime.now() - last_cancel_check).total_seconds() > 2.0:
-                                             if not self._check_cancellation(ep): break
+                                             if not self._check_cancellation(ep): continue
                                              last_cancel_check = datetime.now()
 
                                         if total > 0:
@@ -207,7 +225,7 @@ class Processor:
                                                 logger.info(f"Downloading {ep.title}: {percent}%")
                                                 last_logged_percent = percent
                         
-                        if not self._check_cancellation(ep): break # Check after download
+                        if not self._check_cancellation(ep): continue # Check after download
 
                         file_size_mb = os.path.getsize(input_path) / (1024 * 1024)
                         logger.info(f"Download complete: {file_size_mb:.2f} MB")
@@ -263,15 +281,15 @@ class Processor:
                             if "CancelledByUser" in str(e) or cancellation_state['is_cancelled']:
                                 logger.warning(f"Transcription cancelled for {ep.title}")
                                 self._cleanup_artifacts(ep)
-                                break # Stop processing this episode
+                                continue # Stop processing this episode
                             raise e
                         
-                        if not self._check_cancellation(ep): break # Check after transcribe
+                        if not self._check_cancellation(ep): continue # Check after transcribe
                         
                         # Double check state
                         if cancellation_state['is_cancelled']:
                              self._cleanup_artifacts(ep)
-                             break
+                             continue
 
                         duration = (datetime.now() - start_time).total_seconds()
                         logger.info(f"Transcription complete in {duration:.1f}s")
@@ -284,7 +302,7 @@ class Processor:
                         
                     self.ep_repo.update_progress(ep.id, "detecting_ads", 50, transcript_path=transcript_path)
                     
-                    if not self._check_cancellation(ep): break
+                    if not self._check_cancellation(ep): continue
 
                     # 3. Detect Ads
                     logger.info("Detecting ads...")
@@ -299,7 +317,7 @@ class Processor:
                     
                     ad_segments = await asyncio.to_thread(self.ad_detector.detect_ads, transcript, detect_options)
                     
-                    if not self._check_cancellation(ep): break
+                    if not self._check_cancellation(ep): continue
 
                     logger.info(f"Found {len(ad_segments)} ad segments: {ad_segments}")
                     
@@ -386,7 +404,7 @@ class Processor:
 
                     self.ep_repo.update_progress(ep.id, "removing_ads", 75, ad_report_path=report_path, report_path=human_report_path)
                     
-                    if not self._check_cancellation(ep): break
+                    if not self._check_cancellation(ep): continue
 
                     # 4. Remove Ads
                     output_path = os.path.join(episode_dir, "processed.mp3")
@@ -402,7 +420,7 @@ class Processor:
                     
                     # 4.5 Generate & Append Summary (If enabled)
                     
-                    if not self._check_cancellation(ep): break
+                    if not self._check_cancellation(ep): continue
 
                     # 4.5 Generate Intros (Title Intro & Summary)
                     intro_files = []
@@ -496,7 +514,7 @@ class Processor:
                         if temp_clean_path and os.path.exists(temp_clean_path) and not os.path.exists(output_path):
                             os.rename(temp_clean_path, output_path)
                     
-                    if not self._check_cancellation(ep): break
+                    if not self._check_cancellation(ep): continue
 
                     # 5. Cleanup & Save
                     if os.path.exists(input_path):
@@ -703,6 +721,9 @@ class Processor:
             self.ep_repo.requeue_stuck()
         except Exception as e:
             logger.error(f"Failed to requeue stuck episodes: {e}")
+            
+        # 1. Initial Feed Sync/Regen on startup to clear stale URLs
+        await self.regenerate_all_feeds()
         
         while True:
             # Get latest interval from DB
@@ -722,3 +743,76 @@ class Processor:
                 await asyncio.sleep(60)
             
             await asyncio.sleep(interval * 60)
+
+def setup_background_logging():
+    """Configure logging for the background process."""
+    import logging
+    from logging.handlers import RotatingFileHandler
+    
+    log_file = os.path.join(settings.DATA_DIR, "app.log")
+    log_formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    
+    fh = RotatingFileHandler(
+        log_file,
+        maxBytes=settings.LOG_MAX_BYTES,
+        backupCount=settings.LOG_BACKUP_COUNT
+    )
+    fh.setFormatter(log_formatter)
+    
+    sh = logging.StreamHandler()
+    sh.setFormatter(log_formatter)
+    
+    root = logging.getLogger()
+    root.setLevel(settings.LOG_LEVEL)
+    root.addHandler(fh)
+    root.addHandler(sh)
+
+def start_processor_process():
+    """Entry point for the background processor process."""
+    import os
+    import signal
+    import asyncio
+    
+    # 0. Setup logging for the new process
+    setup_background_logging()
+    
+    # 1. Lower priority for only this process
+    try:
+        os.nice(10)
+    except Exception as e:
+        print(f"Failed to set background priority: {e}")
+
+    # 2. Setup isolated event loop
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    processor = Processor()
+    
+    # 3. Handle stop signals gracefully
+    stop_event = asyncio.Event()
+    
+    def handle_stop():
+        print("Background processor receiving stop signal...")
+        stop_event.set()
+        
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, handle_stop)
+        except NotImplementedError:
+             # Signal handlers not supported on Windows in loop, but we are on Mac
+             pass
+
+    async def run_until_stopped():
+        runner = asyncio.create_task(processor.run_loop())
+        await stop_event.wait()
+        runner.cancel()
+        try:
+            await runner
+        except asyncio.CancelledError:
+            pass
+        print("Background processor stopped clean.")
+
+    try:
+        loop.run_until_complete(run_until_stopped())
+    finally:
+        loop.close()
