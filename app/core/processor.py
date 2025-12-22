@@ -460,6 +460,7 @@ class Processor:
                                 )
                                 # Save to DB and file immediately
                                 self.ep_repo.update_ai_summary(ep.id, summary_text)
+                                summary_txt_path = os.path.join(episode_dir, "summary.txt")
                                 async with aiofiles.open(summary_txt_path, "w") as f:
                                     await f.write(summary_text)
                             except Exception as e:

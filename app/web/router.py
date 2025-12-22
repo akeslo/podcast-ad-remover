@@ -14,7 +14,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-templates = Jinja2Templates(directory="app/web/templates")
+TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "templates")
+templates = Jinja2Templates(directory=TEMPLATE_DIR)
 
 # Add simple markdown filter
 def simple_markdown(text):
