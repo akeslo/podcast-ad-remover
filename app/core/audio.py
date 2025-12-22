@@ -65,7 +65,8 @@ class AudioProcessor:
         concat_inputs = []
         
         for i, (start, end) in enumerate(keep_segments):
-            filter_parts.append(f"[0:a]atrim=start={start}:end={end},asetpts=PTS-STARTPTS[a{i}]")
+            # Add aformat to ensure consistent sample rate and layout for concat
+            filter_parts.append(f"[0:a]atrim=start={start}:end={end},asetpts=PTS-STARTPTS,aformat=sample_rates=44100:channel_layouts=stereo[a{i}]")
             concat_inputs.append(f"[a{i}]")
             
         filter_str = ";".join(filter_parts)
@@ -81,7 +82,13 @@ class AudioProcessor:
         ]
         
         logger.info("Running FFmpeg...")
-        subprocess.run(cmd, check=True)
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            logger.info("FFmpeg completed successfully.")
+        except subprocess.CalledProcessError as e:
+            logger.error(f"FFmpeg failed with exit code {e.returncode}")
+            logger.error(f"FFmpeg stderr: {e.stderr}")
+            raise Exception(f"FFmpeg failed: {e.stderr}") from e
 
     @staticmethod
     def prepend_audio(main_audio_path: str, intro_audio_path: str, output_path: str):
@@ -140,8 +147,9 @@ class AudioProcessor:
         ])
         
         try:
-            subprocess.run(cmd, check=True)
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
             logger.info(f"Successfully concatenated files to {output_path}")
         except subprocess.CalledProcessError as e:
-            logger.error(f"Failed to concatenate files: {e}")
-            raise
+            logger.error(f"Failed to concatenate files: {e.returncode}")
+            logger.error(f"FFmpeg stderr: {e.stderr}")
+            raise Exception(f"FFmpeg concatenation failed: {e.stderr}") from e

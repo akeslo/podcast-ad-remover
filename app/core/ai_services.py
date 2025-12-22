@@ -10,6 +10,43 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+class LogRedirector:
+    """Context manager to redirect stdout/stderr to a logger with buffering."""
+    def __init__(self, logger, level=logging.INFO, line_callback=None):
+        self.logger = logger
+        self.level = level
+        self.line_callback = line_callback
+        self._stdout = sys.stdout
+        self._buf = ""
+
+    def write(self, buf):
+        self._buf += buf
+        if "\n" in self._buf:
+            lines = self._buf.split("\n")
+            # All but the last one are complete lines
+            for line in lines[:-1]:
+                if line.strip():
+                    self.logger.log(self.level, line.rstrip())
+                    if self.line_callback:
+                        self.line_callback(line)
+            # The last one is a partial line (or empty if ended with newline)
+            self._buf = lines[-1]
+
+    def flush(self):
+        if self._buf.strip():
+            self.logger.log(self.level, self._buf.rstrip())
+            if self.line_callback:
+                self.line_callback(self._buf)
+            self._buf = ""
+
+    def __enter__(self):
+        sys.stdout = self
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.flush()
+        sys.stdout = self._stdout
+
 class Transcriber:
     def __init__(self):
         self.model = None
@@ -27,14 +64,43 @@ class Transcriber:
             except Exception as e:
                 logger.warning(f"Failed to fetch whisper setting, using default: {e}")
                 
-            logger.info(f"Loading Whisper model: {idx}")
+            logger.info(f"Loading Whisper model: {idx} (Download Root: {settings.MODELS_DIR})")
+            import time
+            start_load = time.time()
             self.model = whisper.load_model(idx, download_root=settings.MODELS_DIR)
+            load_duration = time.time() - start_load
+            logger.info(f"Model loaded in {load_duration:.2f}s")
 
-    def transcribe(self, audio_path: str) -> Dict:
+    def transcribe(self, audio_path: str, progress_callback=None) -> Dict:
+        from app.core.audio import AudioProcessor
+        import re
+        
         self.load_model()
-        logger.info(f"Transcribing {audio_path}...")
-        # verbose=True prints to stdout, which Docker captures
-        result = self.model.transcribe(audio_path, verbose=True)
+        
+        audio_duration = AudioProcessor.get_duration(audio_path)
+        logger.info(f"Transcribing {audio_path} (Duration: {audio_duration:.2f}s)...")
+        
+        # Regex to match whisper timestamps: [00:00.000 --> 00:07.640] or [01:00:00.000 --> 01:00:05.000]
+        # Matches the 'end' timestamp to track progress. Handles optional HH: prefix.
+        ts_regex = re.compile(r"\[.* --> (?:(\d+):)?(\d{2}):(\d{2})\.\d{3}\]")
+        
+        def on_line(line):
+            if progress_callback:
+                match = ts_regex.search(line)
+                if match:
+                    # groups: (hours, mins, secs) - hours is optional (None if not present)
+                    h, m, s = match.groups()
+                    current_seconds = int(h or 0) * 3600 + int(m) * 60 + int(s)
+                    progress_callback(current_seconds, audio_duration)
+
+        # verbose=True prints to stdout, which we now capture via LogRedirector
+        with LogRedirector(logger, line_callback=on_line):
+            result = self.model.transcribe(audio_path, verbose=True)
+            
+        segments_count = len(result.get("segments", []))
+        language = result.get("language", "unknown")
+        logger.info(f"Transcription complete. Found {segments_count} segments. Language: {language}")
+        
         return result
 
 class LLMProvider:
@@ -258,6 +324,7 @@ class AdDetector:
         return self.create_provider(provider_type)
 
     def detect_ads(self, transcript: Dict, options: Dict = None) -> List[Dict[str, float]]:
+        self.settings = self._load_settings()
         if not options:
             options = {
                 "remove_ads": True, "remove_promos": True, "remove_intros": False, "remove_outros": False, "custom_instructions": None
@@ -281,19 +348,26 @@ class AdDetector:
             raise e
 
     def generate_summary(self, transcript: Dict, podcast_name: str, episode_title: str, pub_date: str) -> str:
+        self.settings = self._load_settings()
         text_data = ""
         for seg in transcript['segments']:
             text_data += f"{seg['text']} "
             
-        # Build Prompt (Simplified)
-        template = self.settings.get('summary_prompt_template', """
+        # Build Prompt (use default if None or empty in database)
+        db_template = self.settings.get('summary_prompt_template')
+        template = db_template if db_template else """
         You are a smart assistant. Write a short 2-3 sentence summary of this podcast episode.
         The summary must:
         1. NOT mention the podcast name, episode title, or date.
         2. Start immediately with "This episode includes".
         3. Briefly summarize key topics.
         Transcript Context: {transcript_context}
-        """)
+        """
+
+        # Ensure template is a string (defensive)
+        if template is None:
+            template = "Summarize this: {transcript_context}"
+
         
         try:
              prompt = template.format(transcript_context=text_data[:100000])
@@ -368,19 +442,25 @@ class AdDetector:
     # Static method to list Gemini models
     @staticmethod
     def list_gemini_models():
-        if not settings.GEMINI_API_KEY:
+        # Priority: DB > Env
+        api_key = settings.GEMINI_API_KEY
+        try:
+            from app.infra.database import get_db_connection
+            with get_db_connection() as conn:
+                row = conn.execute("SELECT gemini_api_key FROM app_settings WHERE id = 1").fetchone()
+                if row and row['gemini_api_key']:
+                    api_key = row['gemini_api_key']
+        except: pass
+
+        if not api_key:
             return []
             
         try:
-            # Check if we are using the new SDK or old one based on imports
-            # The file imports 'from google import genai' which is the new SDK style
-            # but creates Client. It doesn't typically have global configure.
-            # Assuming mixed usage or valid previously. We just guard the key here.
-            genai.configure(api_key=settings.GEMINI_API_KEY)
+            genai.configure(api_key=api_key)
             models = []
             for m in genai.list_models():
                 if 'generateContent' in m.supported_generation_methods:
-                   models.append(m.name.replace('models/', ''))
+                    models.append(m.name.replace('models/', ''))
             return models
         except Exception as e:
             logger.error(f"Failed to list Gemini models: {e}")
@@ -399,6 +479,45 @@ class AdDetector:
         
         return False
 
+    async def validate_tts(self):
+        """
+        Check if TTS service is available and model is ready.
+        """
+        try:
+             # Fetch configured voice model
+            piper_model_file = "en_GB-cori-high.onnx"
+            try:
+                from app.infra.database import get_db_connection
+                with get_db_connection() as conn:
+                    row = conn.execute("SELECT piper_model FROM app_settings WHERE id = 1").fetchone()
+                    if row and row['piper_model']:
+                        piper_model_file = row['piper_model']
+            except: pass
+            
+            script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "tts_worker.py"))
+            
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable, script_path, "--check", 
+                "--model", piper_model_file,
+                "--models-dir", settings.MODELS_DIR,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            stdout, stderr = await proc.communicate()
+            
+            if proc.returncode != 0:
+                error_msg = stderr.decode().strip()
+                logger.error(f"TTS Validation Failed: {error_msg}")
+                raise Exception(f"TTS Health Check Failed: {error_msg}")
+                
+            logger.info("TTS Validation Passed.")
+            return True
+            
+        except Exception as e:
+            logger.error(f"TTS Validation Error: {e}")
+            raise e
+
     async def generate_audio(self, text: str, output_path: str):
         """
         Generate TTS audio using local system TTS (offline).
@@ -406,6 +525,12 @@ class AdDetector:
         """
         try:
             logger.info("Generating TTS (Piper in subprocess)...")
+            
+            # Clean text for TTS (remove markdown artifacts and quotes)
+            # TTS engines often struggle or speak "asterisk" or "quote" aloud
+            chars_to_remove = ['"', '*', '“', '”', '‘', '’', '_', '#']
+            for char in chars_to_remove:
+                text = text.replace(char, '')
             
             # Fetch configured voice model
             piper_model_file = "en_GB-cori-high.onnx"
@@ -419,11 +544,13 @@ class AdDetector:
                 logger.warning(f"Failed to fetch piper setting, using default: {e}")
             
             # Resolve absolute path to the worker script
-            script_path = os.path.join(os.path.dirname(__file__), "tts_worker.py")
+            script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "tts_worker.py"))
             
             # Run the worker script
             proc = await asyncio.create_subprocess_exec(
-                sys.executable, script_path, output_path, "--model", piper_model_file,
+                sys.executable, script_path, output_path, 
+                "--model", piper_model_file,
+                "--models-dir", settings.MODELS_DIR,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE

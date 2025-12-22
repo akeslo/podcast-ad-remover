@@ -56,17 +56,46 @@ async def delete_subscription(id: int):
     sub = repo.get_by_id(id)
     
     if sub:
-        # Delete audio directory
+        # 1. Delete all episodes using Processor (cleans DB + all artifact files)
+        proc = get_processor()
+        ep_repo = EpisodeRepository()
+        
+        # We need a way to get all episodes IDs first
+        # Assuming get_by_subscription returns models with IDs
+        episodes = ep_repo.get_by_subscription(sub.id)
+        for ep in episodes:
+            await proc.delete_episode(ep.id)
+            
+        # 2. Delete subscription-level folders/files
+        
+        # Audio directory (Subscription folder)
         dir_path = os.path.join(settings.AUDIO_DIR, sub.slug)
         if os.path.exists(dir_path):
             try:
                 shutil.rmtree(dir_path)
             except Exception as e:
                 print(f"Error deleting directory {dir_path}: {e}")
-                
+        
+        # Feed file
+        feed_path = os.path.join(settings.FEEDS_DIR, f"{sub.slug}.xml")
+        if os.path.exists(feed_path):
+            try:
+                os.remove(feed_path)
+            except Exception as e:
+                 print(f"Error deleting feed file {feed_path}: {e}")
+
+        # 3. Delete Subscription from DB
         repo.delete(id)
     
-    # Regenerate static site
+    return {"status": "deleted"}
+
+@router.delete("/episodes/{id}")
+async def delete_episode(id: int):
+    """Delete a specific episode and its files."""
+    proc = get_processor()
+    success = await proc.delete_episode(id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Episode not found")
     return {"status": "deleted"}
 
 @router.post("/subscriptions/{id}/check")
@@ -83,10 +112,11 @@ async def process_episode(id: int, background_tasks: BackgroundTasks, skip_trans
     ep_repo = EpisodeRepository()
     
     import json
-    flags = json.dumps({'skip_transcription': skip_transcription}) if skip_transcription else None
+    flags = {'skip_transcription': skip_transcription}
+    flags_json = json.dumps(flags)
     
     # Using reset_status to ensure clean state but with flags
-    ep_repo.reset_status(id, processing_flags=flags)
+    ep_repo.reset_status(id, processing_flags=flags_json)
     ep_repo.update_status(id, "pending")
     
     proc = get_processor()

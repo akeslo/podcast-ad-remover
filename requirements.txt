@@ -12,3 +12,5 @@ pydantic-settings>=2.1.0
 aiofiles>=23.2.0
 
 piper-tts==1.2.0
+bcrypt
+itsdangerous
