@@ -121,9 +121,8 @@ def generate_rss_links(request: Request, sub, global_settings: dict, user_obj=No
             rss_url = f"{rss_url}{separator}auth={token}"
 
 
-    clean_url = rss_url.replace('https://', '').replace('http://', '')
     return {
-        "rss": f"rss://{clean_url}",
+        "rss": rss_url,
         "direct": rss_url,
         "apple": rss_url,  # Method 1: Direct HTTPS URL for manual "Follow a Show by URL"
         "pocket_casts": f"pktc://subscribe/{rss_url}",
@@ -981,9 +980,8 @@ def _render_index(request: Request, error: str = None):
                 rss_url = f"{rss_url}{separator}auth={token}"
 
 
-        clean_url = rss_url.replace('https://', '').replace('http://', '')
         unified_links = {
-            "rss": f"rss://{clean_url}",
+            "rss": rss_url,
             "direct": rss_url,
             "apple": rss_url,  # Method 1: Direct HTTPS URL
             "pocket_casts": f"pktc://subscribe/{rss_url}",
