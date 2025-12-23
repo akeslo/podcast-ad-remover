@@ -23,11 +23,6 @@ async def feed_auth_middleware(request: Request, call_next):
     if not settings.get('enable_feed_auth'):
         return await call_next(request)
     
-    # Allow access if already logged in via session
-    from app.web.auth import SESSION_USER_KEY
-    if request.session.get(SESSION_USER_KEY):
-        return await call_next(request)
-    
     # Check for Authorization header
     auth_header = request.headers.get('Authorization')
     encoded_credentials = None
