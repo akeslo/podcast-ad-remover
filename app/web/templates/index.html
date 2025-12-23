@@ -459,6 +459,36 @@
     })();
     {% endif %}
 
+    // View Toggle Logic
+    window.setView = function (mode) {
+        const grid = document.getElementById('podcast-grid');
+        if (!grid) return;
+
+        // Set attribute
+        grid.setAttribute('data-view', mode);
+
+        // Save preference
+        localStorage.setItem('dashboard-view-mode', mode);
+
+        // Update buttons
+        ['grid', 'list', 'art'].forEach(m => {
+            const btn = document.getElementById(`view-${m}`);
+            if (btn) {
+                if (m === mode) {
+                    btn.classList.add('bg-primary-500', 'text-white');
+                    btn.classList.remove('text-text-muted', 'hover:bg-white/[0.1]');
+                } else {
+                    btn.classList.remove('bg-primary-500', 'text-white');
+                    btn.classList.add('text-text-muted', 'hover:bg-white/[0.1]');
+                }
+            }
+        });
+    };
+
+    // Initialize view
+    const savedView = localStorage.getItem('dashboard-view-mode') || 'grid';
+    setView(savedView);
+
     // Podcast Filter/Sort
     (function () {
         const searchInput = document.getElementById('podcast-search');
@@ -516,36 +546,6 @@
         if (searchInput) searchInput.addEventListener('input', applyFiltersAndSort);
         if (filterSelect) filterSelect.addEventListener('change', applyFiltersAndSort);
         if (sortSelect) sortSelect.addEventListener('change', applyFiltersAndSort);
-
-        // View Toggle Logic
-        window.setView = function (mode) {
-            const grid = document.getElementById('podcast-grid');
-            if (!grid) return;
-
-            // Set attribute
-            grid.setAttribute('data-view', mode);
-
-            // Save preference
-            localStorage.setItem('dashboard-view-mode', mode);
-
-            // Update buttons
-            ['grid', 'list', 'art'].forEach(m => {
-                const btn = document.getElementById(`view-${m}`);
-                if (btn) {
-                    if (m === mode) {
-                        btn.classList.add('bg-primary-500', 'text-white');
-                        btn.classList.remove('text-text-muted', 'hover:bg-white/[0.1]');
-                    } else {
-                        btn.classList.remove('bg-primary-500', 'text-white');
-                        btn.classList.add('text-text-muted', 'hover:bg-white/[0.1]');
-                    }
-                }
-            });
-        };
-
-        // Initialize view from storage
-        const savedView = localStorage.getItem('dashboard-view-mode') || 'grid';
-        setView(savedView);
     })();
 </script>
 {% endblock %}
