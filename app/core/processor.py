@@ -412,14 +412,69 @@ class Processor:
             <html>
             <head>
                 <title>Ad Report: {ep.title}</title>
+                <link rel="preconnect" href="https://fonts.googleapis.com">
+                <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+                <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
                 <style>
-                    body {{ font-family: sans-serif; max_width: 800px; margin: 2rem auto; padding: 0 1rem; }}
-                    .segment {{ background: #ffebee; padding: 15px; margin: 10px 0; border-left: 4px solid #f44336; border-radius: 4px; }}
-                    .meta {{ color: #666; font-size: 0.9em; margin-bottom: 20px; }}
-                    .badge {{ background: #e53935; color: white; padding: 2px 8px; border-radius: 12px; font-size: 0.8em; }}
-                    .flex {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }}
-                    .transcript-text {{ background: rgba(255,255,255,0.5); padding: 8px; border-radius: 4px; font-style: italic; color: #444; font-size: 0.9em; margin-top: 10px; }}
-                    .reason {{ margin: 0 0 5px 0; font-weight: bold; color: #b71c1c; }}
+                    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+                    body {{ 
+                        font-family: 'Inter', sans-serif; 
+                        max-width: 900px; 
+                        margin: 0 auto; 
+                        padding: 2rem 1rem;
+                        background: #0a0a0f;
+                        color: #fafafa;
+                        line-height: 1.6;
+                    }}
+                    h1, h2, h3 {{ font-family: 'Space Grotesk', sans-serif; font-weight: 700; }}
+                    h1 {{ font-size: 2rem; margin-bottom: 0.5rem; background: linear-gradient(135deg, #a78bfa, #06b6d4); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }}
+                    h2 {{ font-size: 1.5rem; margin-bottom: 1rem; color: #fafafa; }}
+                    h3 {{ font-size: 1.125rem; margin: 1.5rem 0 1rem 0; color: #a1a1aa; }}
+                    .meta {{ color: #52525b; font-size: 0.85em; margin-bottom: 1.5rem; font-family: monospace; }}
+                    .segment {{ 
+                        background: #1a1a25;
+                        padding: 1.25rem; 
+                        margin: 1rem 0; 
+                        border-left: 4px solid #8b5cf6; 
+                        border-radius: 0.75rem;
+                        border: 1px solid rgba(255,255,255,0.08);
+                        border-left: 4px solid #8b5cf6;
+                    }}
+                    .badge {{ 
+                        background: rgba(139,92,246,0.15); 
+                        color: #a78bfa; 
+                        padding: 0.25rem 0.75rem; 
+                        border-radius: 999px; 
+                        font-size: 0.75em; 
+                        font-weight: 600;
+                        border: 1px solid rgba(139,92,246,0.2);
+                    }}
+                    .badge.intro {{ background: rgba(52,211,153,0.15); color: #34d399; border-color: rgba(52,211,153,0.2); }}
+                    .badge.outro {{ background: rgba(251,191,36,0.15); color: #fbbf24; border-color: rgba(251,191,36,0.2); }}
+                    .flex {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }}
+                    .transcript-text {{ 
+                        background: rgba(255,255,255,0.03); 
+                        padding: 0.75rem 1rem; 
+                        border-radius: 0.5rem; 
+                        font-style: italic; 
+                        color: #a1a1aa; 
+                        font-size: 0.9em; 
+                        margin-top: 0.75rem;
+                        border: 1px solid rgba(255,255,255,0.06);
+                    }}
+                    .reason {{ margin: 0; font-weight: 600; color: #a78bfa; }}
+                    .time {{ color: #fafafa; font-weight: 600; }}
+                    a {{ color: #a78bfa; text-decoration: none; }}
+                    a:hover {{ text-decoration: underline; }}
+                    .total {{ 
+                        display: inline-block;
+                        background: rgba(139,92,246,0.1); 
+                        color: #a78bfa; 
+                        padding: 0.5rem 1rem; 
+                        border-radius: 0.5rem;
+                        font-weight: 600;
+                        margin-bottom: 1rem;
+                    }}
                 </style>
             </head>
             <body>
@@ -428,7 +483,7 @@ class Processor:
                 <p class="meta">GUID: {ep.guid}</p>
                 
                 <h3>Detected Segments</h3>
-                <p>Total Segments: {len(ad_segments)}</p>
+                <p class="total">Total Segments: {len(ad_segments)}</p>
                 
                 {rows_html}
                 
