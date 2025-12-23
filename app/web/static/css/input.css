@@ -292,6 +292,7 @@
     .podcast-artwork {
         @apply relative overflow-hidden;
         aspect-ratio: 1;
+        max-height: 200px;
     }
 
     .podcast-artwork img {

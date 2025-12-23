@@ -111,20 +111,33 @@
         </svg>
     </button>
 
-    <div id="queue-content" class="mt-4 hidden space-y-2">
+    <div id="queue-content" class="mt-4 hidden space-y-3">
         {% for ep in queue %}
-        <div class="flex items-center justify-between p-4 bg-surface-base rounded-xl border border-white/[0.06]">
-            <div class="flex-1 min-w-0 mr-4">
-                <p class="font-medium text-sm truncate">{{ ep.title }}</p>
-                <p class="text-xs text-text-muted">{{ ep.podcast_title }}</p>
+        <div class="p-4 bg-surface-elevated rounded-xl border border-white/[0.06]">
+            <div class="flex items-start justify-between mb-2">
+                <div class="flex-1 min-w-0 mr-4">
+                    <p class="font-medium text-sm truncate">{{ ep.title }}</p>
+                    <p class="text-xs text-text-muted">{{ ep.podcast_title }}</p>
+                </div>
+                <div class="flex-shrink-0">
+                    {% if ep.status == 'processing' %}
+                    <span class="badge-info animate-pulse">Processing</span>
+                    {% else %}
+                    <span class="badge-neutral">Queued</span>
+                    {% endif %}
+                </div>
             </div>
-            <div class="flex items-center gap-2">
-                {% if ep.status == 'processing' %}
-                <span class="badge-info animate-pulse">Processing</span>
-                {% else %}
-                <span class="badge-neutral">Queued</span>
-                {% endif %}
+            {% if ep.status == 'processing' and ep.processing_step %}
+            <div class="mt-3">
+                <div class="flex justify-between items-center text-xs mb-1.5">
+                    <span class="text-primary-400 font-medium">{{ ep.processing_step }}</span>
+                    <span class="text-text-muted">{{ ep.progress }}%</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-bar-fill" style="width: {{ ep.progress }}%"></div>
+                </div>
             </div>
+            {% endif %}
         </div>
         {% endfor %}
     </div>
@@ -163,10 +176,35 @@
 </div>
 {% endif %}
 
+<!-- Podcast Filter Toolbar -->
+{% if subscriptions %}
+<div class="flex flex-wrap items-center gap-3 mb-6 bg-surface-elevated rounded-xl border border-white/[0.08] p-3">
+    <input type="text" id="podcast-search" placeholder="Search podcasts..."
+        class="flex-1 min-w-[180px] px-3 py-1.5 rounded-lg bg-surface-base border border-white/[0.1] text-white placeholder:text-text-muted focus:border-primary-500 outline-none text-sm">
+
+    <select id="podcast-filter"
+        class="px-3 py-1.5 rounded-lg bg-surface-base border border-white/[0.1] text-white text-sm cursor-pointer">
+        <option value="all">All Podcasts</option>
+        <option value="processing">Processing</option>
+        <option value="recent">Recently Updated</option>
+    </select>
+
+    <select id="podcast-sort"
+        class="px-3 py-1.5 rounded-lg bg-surface-base border border-white/[0.1] text-white text-sm cursor-pointer">
+        <option value="alpha">A-Z</option>
+        <option value="recent">Most Recent</option>
+        <option value="episodes">Most Episodes</option>
+    </select>
+
+    <span id="podcast-count" class="text-xs text-text-muted ml-auto">{{ subscriptions|length }} podcasts</span>
+</div>
+{% endif %}
+
 <!-- Podcast Grid -->
-<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+<div id="podcast-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
     {% for item in subscriptions %}
-    <article class="podcast-card">
+    <article class="podcast-card" data-title="{{ item.sub.title|lower }}" data-episodes="{{ item.episode_count }}"
+        data-processing="{{ item.processing_count|default(0) }}">
         <!-- Artwork -->
         {% if item.sub.image_url %}
         <div class="podcast-artwork">
@@ -382,5 +420,63 @@
         startTimer();
     })();
     {% endif %}
+
+    // Podcast Filter/Sort
+    (function () {
+        const searchInput = document.getElementById('podcast-search');
+        const filterSelect = document.getElementById('podcast-filter');
+        const sortSelect = document.getElementById('podcast-sort');
+        const countSpan = document.getElementById('podcast-count');
+        const grid = document.getElementById('podcast-grid');
+        if (!grid) return;
+
+        const cards = Array.from(grid.querySelectorAll('.podcast-card'));
+
+        function applyFiltersAndSort() {
+            const searchTerm = searchInput ? searchInput.value.toLowerCase() : '';
+            const filterVal = filterSelect ? filterSelect.value : 'all';
+            const sortVal = sortSelect ? sortSelect.value : 'alpha';
+
+            let visibleCards = cards.filter(card => {
+                const title = card.dataset.title || '';
+                const processing = parseInt(card.dataset.processing) || 0;
+
+                // Search filter
+                if (searchTerm && !title.includes(searchTerm)) return false;
+
+                // Status filter
+                if (filterVal === 'processing' && processing === 0) return false;
+
+                return true;
+            });
+
+            // Sort
+            visibleCards.sort((a, b) => {
+                if (sortVal === 'alpha') {
+                    return (a.dataset.title || '').localeCompare(b.dataset.title || '');
+                } else if (sortVal === 'episodes') {
+                    return (parseInt(b.dataset.episodes) || 0) - (parseInt(a.dataset.episodes) || 0);
+                }
+                return 0;
+            });
+
+            // Hide all first
+            cards.forEach(c => c.style.display = 'none');
+
+            // Show filtered and reorder
+            visibleCards.forEach(c => {
+                c.style.display = '';
+                grid.appendChild(c);
+            });
+
+            if (countSpan) {
+                countSpan.textContent = visibleCards.length + ' podcast' + (visibleCards.length !== 1 ? 's' : '');
+            }
+        }
+
+        if (searchInput) searchInput.addEventListener('input', applyFiltersAndSort);
+        if (filterSelect) filterSelect.addEventListener('change', applyFiltersAndSort);
+        if (sortSelect) sortSelect.addEventListener('change', applyFiltersAndSort);
+    })();
 </script>
 {% endblock %}
