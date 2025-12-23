@@ -1263,8 +1263,54 @@ async def update_settings(
 
 from fastapi.responses import FileResponse
 
+@router.get("/episodes/{id}/transcript")
+async def view_transcript(id: int, request: Request):
+    from app.infra.database import get_db_connection
+    from app.core.config import settings
+    import json
+    
+    with get_db_connection() as conn:
+        row = conn.execute(
+            """SELECT e.id, e.title, e.pub_date, e.duration, e.guid, s.slug as subscription_slug, e.transcript_path 
+               FROM episodes e 
+               JOIN subscriptions s ON e.subscription_id = s.id 
+               WHERE e.id = ?""", 
+            (id,)
+        ).fetchone()
+        
+        if not row:
+            raise HTTPException(status_code=404, detail="Episode not found")
+            
+        transcript_path = row['transcript_path']
+        
+        # Check standard paths if not recorded in DB or file missing
+        if not transcript_path or not os.path.exists(transcript_path):
+             episode_slug = f"{row['guid']}".replace("/", "_").replace(" ", "_")
+             potential_path = os.path.join(
+                settings.get_episode_dir(row['subscription_slug'], episode_slug),
+                "transcript.json"
+            )
+             if os.path.exists(potential_path):
+                 transcript_path = potential_path
+        
+        if not transcript_path or not os.path.exists(transcript_path):
+             raise HTTPException(status_code=404, detail="Transcript file not found")
+             
+        try:
+            with open(transcript_path, 'r') as f:
+                data = json.load(f)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error reading transcript: {str(e)}")
+
+        return templates.TemplateResponse("transcript.html", {
+            "request": request,
+            "episode": row,
+            "transcript_data": data,
+            "format_duration": format_duration
+        })
+
 @router.get("/artifacts/transcript/{id}")
-async def get_transcript(id: int):
+async def get_transcript_json(id: int):
     from app.infra.database import get_db_connection
     from app.core.config import settings
     

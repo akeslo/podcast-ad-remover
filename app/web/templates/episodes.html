@@ -5,44 +5,56 @@
     <a href="/" class="text-primary-400 hover:text-primary-300 transition-colors">&larr; Back to Subscriptions</a>
 </div>
 
-<div class="card mb-6">
-    <div class="flex gap-6 sm:gap-8 items-start flex-col md:flex-row">
+<div class="card mb-8 overflow-hidden relative group">
+    <!-- Cinematic Background Blur -->
+    <div class="absolute inset-0 z-0">
+        {% if subscription.image_url %}
+        <div class="absolute inset-0 bg-cover bg-center blur-3xl opacity-20 scale-110"
+            style="background-image: url('{{ subscription.image_url }}');"></div>
+        {% endif %}
+        <div class="absolute inset-0 bg-gradient-to-r from-bg-surface via-bg-surface/95 to-transparent"></div>
+    </div>
+
+    <div class="relative z-10 flex flex-col md:flex-row items-start gap-8 p-2">
+        <!-- Artwork -->
         {% if subscription.image_url %}
         <img src="{{ subscription.image_url }}" alt="{{ subscription.title }}"
-            class="w-24 h-24 sm:w-32 sm:h-32 object-cover rounded-xl shadow-lg">
-        {% endif %}
-        <div class="flex-1 w-full">
-            <div class="flex flex-col gap-2 mb-3">
-                <h1 class="font-display text-3xl sm:text-4xl font-bold tracking-tight text-white leading-[1.1]">
-                    {{ subscription.title }}
-                </h1>
-                {% if subscription.description %}
-                <div class="text-sm text-text-secondary leading-relaxed max-w-3xl line-clamp-2">
-                    {{ subscription.description | striptags }}
-                </div>
-                {% endif %}
-                <div class="flex flex-wrap gap-2 mt-1">
-                    <button onclick="checkNow({{ subscription.id }})" class="btn-primary btn-sm">Check Updates</button>
-                    <button onclick="deleteSubscription({{ subscription.id }})"
-                        class="btn-danger btn-sm">Delete</button>
-                </div>
-            </div>
-        </div>
-        <p class="text-text-muted break-all text-sm">{{ subscription.feed_url }}</p>
-        {% if total_listens and total_listens > 0 %}
-        <p class="text-sm text-text-secondary mt-2">
-            <span class="font-semibold">Total Listens:</span> <span class="text-primary-400">{{ total_listens
-                }}</span>
-        </p>
+            class="w-32 h-32 md:w-40 md:h-40 object-cover rounded-xl shadow-2xl ring-1 ring-white/10 shrink-0">
         {% endif %}
 
-        <div class="mt-6 flex flex-wrap gap-2">
-            <a href="{{ links.direct }}" class="badge-soft">Direct</a>
-            <a href="{{ links.pocket_casts }}" class="badge-soft">Pocket Casts</a>
-            <a href="/subscribe/apple?url={{ links.apple | urlencode }}" class="badge-soft">Apple</a>
-            <a href="{{ links.overcast }}" class="badge-soft">Overcast</a>
-            <a href="{{ links.castbox }}" class="badge-soft">Castbox</a>
-            <a href="{{ links.podcast_addict }}" class="badge-soft">Podcast Addict</a>
+        <!-- Content -->
+        <div class="flex-1 min-w-0 py-1">
+            <h1 class="font-display text-3xl md:text-4xl font-bold tracking-tight text-white mb-3">
+                {{ subscription.title }}
+            </h1>
+
+            {% if subscription.description %}
+            <div class="text-text-secondary leading-relaxed max-w-2xl text-sm line-clamp-2 md:line-clamp-3 mb-5">
+                {{ subscription.description | striptags }}
+            </div>
+            {% endif %}
+
+            <div class="flex flex-wrap items-center gap-2">
+                <button onclick="checkNow({{ subscription.id }})"
+                    class="btn-primary btn-sm shadow-lg shadow-primary-500/20">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15">
+                        </path>
+                    </svg>
+                    Check Updates
+                </button>
+                <div class="h-8 w-px bg-white/10 mx-2"></div>
+                <a href="{{ links.direct }}" class="btn-secondary btn-sm" target="_blank">Direct RSS</a>
+                <a href="/subscribe/apple?url={{ links.apple | urlencode }}" class="btn-secondary btn-sm"
+                    target="_blank">Apple</a>
+                <!-- More links hidden/optional for cleaner UI -->
+                <div class="flex-1"></div>
+                <button onclick="deleteSubscription({{ subscription.id }})"
+                    class="text-xs text-red-400 hover:text-red-300 transition-colors px-3 py-1.5 rounded-lg hover:bg-red-500/10">
+                    Delete Show
+                </button>
+            </div>
         </div>
     </div>
 </div>
@@ -230,8 +242,8 @@
     <!-- Search Input -->
     <div class="relative flex-1 md:w-64">
         <input type="text" id="episode-search" placeholder="Search episodes..."
-            class="w-full bg-surface-base border border-white/[0.1] rounded-lg pl-9 pr-3 py-1.5 text-sm text-text-primary focus:ring-1 focus:ring-primary-500 focus:border-primary-500 transition-colors">
-        <svg class="w-4 h-4 text-text-muted absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" fill="none"
+            class="w-full bg-surface-base border border-white/[0.1] rounded-lg pl-10 pr-3 py-2 text-sm text-text-primary focus:ring-1 focus:ring-primary-500 focus:border-primary-500 transition-colors">
+        <svg class="w-4 h-4 text-text-muted absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" fill="none"
             stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                 d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
@@ -324,7 +336,7 @@
     }
 </style>
 
-<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-8" id="episodes-grid">
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6" id="episodes-grid">
     {% for ep in episodes %}
     <div class="episode-card card flex flex-col relative overflow-hidden group transition-all duration-300 h-full border hover:border-white/10"
         data-status="{{ ep.status }}" data-manual="{{ 'true' if ep.is_manual_download else 'false' }}"
@@ -389,36 +401,65 @@
                 {{ ep.title }}
             </h3>
 
-            <!-- AI Summary (Integrated) -->
-            <div id="desc-content-ai-{{ ep.id }}"
-                class="hidden mb-4 p-4 bg-primary-500/10 rounded-xl border border-primary-500/20 text-sm text-text-body-bright relative"
-                onclick="event.stopPropagation()">
-                <div class="flex items-center gap-2 mb-2 text-primary-300 text-xs font-bold uppercase tracking-wide">
-                    <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
-                        <path
-                            d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z">
-                        </path>
-                    </svg>
-                    AI Summary
-                </div>
-                <div class="markdown-content">{{ ep.ai_summary|simple_markdown|safe }}</div>
-            </div>
+            <!-- Description & AI -->
+            <div class="mb-4 text-sm leading-relaxed text-text-secondary" onclick="event.stopPropagation()">
 
-            <!-- Clean Description -->
-            {% if ep.description %}
-            <div class="relative">
-                <div id="desc-orig-{{ ep.id }}"
-                    class="text-sm text-text-secondary/90 leading-relaxed line-clamp-3 transition-opacity duration-300">
-                    {{ ep.description|clean_description }}
+                {% if ep.ai_summary %}
+                <!-- Primary View: AI Summary -->
+                <div class="p-4 bg-primary-500/5 rounded-xl border border-primary-500/10 mb-2 group/ai cursor-pointer"
+                    onclick="toggleDescription('{{ ep.id }}')">
+                    <div
+                        class="flex items-center gap-2 mb-2 text-primary-400 text-xs font-bold uppercase tracking-wide">
+                        <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+                            <path
+                                d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z">
+                            </path>
+                        </svg>
+                        AI Summary
+                    </div>
+                    <div class="markdown-content text-text-body-bright line-clamp-3 group-[.expanded]/ai:line-clamp-none transition-all"
+                        id="ai-sum-{{ ep.id }}">
+                        {{ ep.ai_summary|simple_markdown|safe }}
+                    </div>
                 </div>
-                <div
-                    class="mt-2 text-[10px] font-bold text-primary-400 uppercase tracking-widest opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
-                    Read More <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
-                    </svg>
+
+                <!-- Toggle for Original -->
+                {% if ep.description %}
+                <details class="group/details">
+                    <summary
+                        class="text-xs font-medium text-text-muted cursor-pointer hover:text-text-secondary list-none flex items-center gap-1 mt-2">
+                        <span class="group-open/details:hidden">View Original Description</span>
+                        <span class="hidden group-open/details:block">Hide Original Description</span>
+                        <svg class="w-3 h-3 group-open/details:rotate-180 transition-transform" fill="none"
+                            stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7">
+                            </path>
+                        </svg>
+                    </summary>
+                    <div class="mt-3 text-text-secondary/80 text-[13px] pl-2 border-l-2 border-white/10">
+                        {{ ep.description|clean_description }}
+                    </div>
+                </details>
+                {% endif %}
+
+                {% else %}
+                <!-- Fallback: Standard Description -->
+                {% if ep.description %}
+                <div class="cursor-pointer group/desc relative" onclick="this.classList.toggle('expanded')">
+                    <div class="line-clamp-3 group-[.expanded]/desc:line-clamp-none transition-all duration-300">
+                        {{ ep.description|clean_description }}
+                    </div>
+                    <div
+                        class="mt-2 text-[10px] font-bold text-primary-400 uppercase tracking-widest opacity-60 group-hover/desc:opacity-100 transition-opacity flex items-center gap-1 group-[.expanded]/desc:hidden">
+                        Expand <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7">
+                            </path>
+                        </svg>
+                    </div>
                 </div>
+                {% endif %}
+                {% endif %}
             </div>
-            {% endif %}
 
             <!-- Progress Bar -->
             {% if ep.status == 'processing' %}
@@ -456,13 +497,15 @@
                 {% endif %}
 
                 {% if ep.transcript_path %}
-                <a href="../artifacts/transcript/{{ ep.id }}" target="_blank"
-                    class="text-text-muted hover:text-white transition-colors" title="View Transcript">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <a href="/episodes/{{ ep.id }}/transcript"
+                    class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-elevated border border-white/5 text-xs font-medium text-text-secondary hover:text-white hover:border-white/20 transition-all"
+                    title="Read Transcript">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                             d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z">
                         </path>
                     </svg>
+                    Transcript
                 </a>
                 {% endif %}
             </div>
@@ -607,39 +650,17 @@
     });
 
     function toggleDescription(id) {
-        const desc = document.getElementById(`desc-${id}`);
-        if (desc.style.maxHeight === 'none' || desc.classList.contains('max-h-full')) {
-            desc.style.maxHeight = '6rem';
-            desc.classList.remove('max-h-full');
-        } else {
-            desc.style.maxHeight = 'none';
-            desc.classList.add('max-h-full');
+        const el = document.getElementById(`ai-sum-${id}`);
+        if (el) {
+            el.parentElement.classList.toggle('expanded');
         }
     }
 
-    function toggleDescription(id) {
-        const descDiv = document.getElementById(`desc-orig-${id}`);
-        const btnText = document.getElementById(`desc-btn-text-${id}`);
-        const icon = document.getElementById(`desc-icon-${id}`);
 
-        if (descDiv.classList.contains('line-clamp-3')) {
-            descDiv.classList.remove('line-clamp-3');
-            btnText.textContent = "Show Less";
-            icon.style.transform = "rotate(180deg)";
-        } else {
-            descDiv.classList.add('line-clamp-3');
-            btnText.textContent = "Read More";
-            icon.style.transform = "rotate(0deg)";
-        }
-    }
 
+    // Unified Toggle
     function toggleAiSummary(id) {
-        const aiContent = document.getElementById(`desc-content-ai-${id}`);
-        if (aiContent.classList.contains('hidden')) {
-            aiContent.classList.remove('hidden');
-        } else {
-            aiContent.classList.add('hidden');
-        }
+        // Now handled by toggleDescription logic for the primary view
     }
 
     // Format Dates on Load

@@ -604,7 +604,47 @@
         background: linear-gradient(135deg, #8b5cf6, #7c3aed);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
+        -webkit-text-fill-color: transparent;
         background-clip: text;
+    }
+
+    /* EPISODE VIEW MODES */
+    /* Grid View (Default) - 2 Cols */
+    #episodes-grid {
+        /* Grid definitions are handled by Tailwind classes in HTML (lg:grid-cols-2) */
+    }
+
+    /* List View */
+    #episodes-grid[data-view="list"] {
+        @apply grid-cols-1 !important;
+        gap: 0.75rem;
+    }
+
+    #episodes-grid[data-view="list"] .episode-card {
+        @apply flex-row items-center p-4 min-h-0;
+    }
+
+    #episodes-grid[data-view="list"] .episode-header {
+        @apply mb-0 flex-1 min-w-0 mr-4;
+    }
+
+    #episodes-grid[data-view="list"] .episode-title {
+        @apply text-base mb-1 truncate;
+    }
+
+    #episodes-grid[data-view="list"] .episode-meta {
+        @apply mt-0;
+    }
+
+    #episodes-grid[data-view="list"] .episode-card .flex-1 {
+        @apply p-0 flex flex-row items-center;
+    }
+
+    #episodes-grid[data-view="list"] .episode-footer,
+    #episodes-grid[data-view="list"] #desc-content-ai,
+    #episodes-grid[data-view="list"] .group\/desc,
+    #episodes-grid[data-view="list"] .bg-surface-base.rounded-md {
+        display: none;
     }
 
     .glass {
