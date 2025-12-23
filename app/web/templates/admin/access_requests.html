@@ -333,23 +333,28 @@
 
 <!-- Login History Table -->
 <div>
-    <h2 class="font-display text-2xl font-bold mb-6">Login History <span
-            class="text-sm font-normal text-text-muted">(last 30 days)</span></h2>
+    <div class="flex flex-wrap justify-between items-center gap-4 mb-4">
+        <h2 class="font-display text-2xl font-bold">Login History <span
+                class="text-sm font-normal text-text-muted">(last 30 days)</span></h2>
+        <input type="text" id="login-filter" placeholder="Search logins..."
+            class="px-4 py-2 rounded-xl bg-surface-elevated border border-white/[0.1] text-white placeholder:text-text-muted focus:border-primary-500 outline-none max-w-xs">
+    </div>
 
     {% if login_history %}
-    <div class="overflow-x-auto rounded-xl border border-white/[0.06]" style="max-height: 400px; overflow-y: auto;">
-        <table class="table-dark">
-            <thead class="sticky top-0 bg-surface-base">
+    <div class="w-full overflow-x-auto rounded-xl border border-white/[0.06]"
+        style="max-height: 500px; overflow-y: auto;">
+        <table class="table-dark w-full" id="login-table">
+            <thead class="sticky top-0 bg-surface-elevated z-10">
                 <tr>
-                    <th>Status</th>
-                    <th>Username</th>
-                    <th>IP Address</th>
-                    <th>Timestamp</th>
+                    <th class="cursor-pointer hover:text-primary-400" onclick="sortTable(0)">Status ↕</th>
+                    <th class="cursor-pointer hover:text-primary-400" onclick="sortTable(1)">Username ↕</th>
+                    <th class="cursor-pointer hover:text-primary-400" onclick="sortTable(2)">IP Address ↕</th>
+                    <th class="cursor-pointer hover:text-primary-400" onclick="sortTable(3)">Timestamp ↕</th>
                 </tr>
             </thead>
-            <tbody>
+            <tbody id="login-tbody">
                 {% for login in login_history %}
-                <tr class="{% if not login.success %}bg-red-500/5{% endif %}">
+                <tr class="login-row {% if not login.success %}bg-red-500/10 hover:bg-red-500/20{% endif %}">
                     <td class="whitespace-nowrap">
                         {% if login.success %}
                         <span class="badge-success">✓ Success</span>
@@ -365,6 +370,42 @@
             </tbody>
         </table>
     </div>
+    <div class="mt-2 text-xs text-text-muted" id="login-count">Showing {{ login_history|length }} entries</div>
+
+    <script>
+        // Search filter
+        document.getElementById('login-filter').addEventListener('input', function (e) {
+            const filter = e.target.value.toLowerCase();
+            const rows = document.querySelectorAll('.login-row');
+            let count = 0;
+            rows.forEach(row => {
+                const text = row.textContent.toLowerCase();
+                const match = text.includes(filter);
+                row.style.display = match ? '' : 'none';
+                if (match) count++;
+            });
+            document.getElementById('login-count').textContent = `Showing ${count} entries`;
+        });
+
+        // Sort table
+        let sortDirection = {};
+        function sortTable(colIndex) {
+            const table = document.getElementById('login-table');
+            const tbody = document.getElementById('login-tbody');
+            const rows = Array.from(tbody.querySelectorAll('tr'));
+
+            sortDirection[colIndex] = !sortDirection[colIndex];
+            const dir = sortDirection[colIndex] ? 1 : -1;
+
+            rows.sort((a, b) => {
+                const aText = a.cells[colIndex].textContent.trim();
+                const bText = b.cells[colIndex].textContent.trim();
+                return aText.localeCompare(bText) * dir;
+            });
+
+            rows.forEach(row => tbody.appendChild(row));
+        }
+    </script>
     {% else %}
     <div class="text-center py-12 rounded-xl border border-dashed border-white/[0.1]">
         <p class="text-text-muted">No login history recorded</p>

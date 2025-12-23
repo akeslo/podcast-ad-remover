@@ -268,12 +268,13 @@
 
                         {% if ep.ai_summary %}
                         <div id="desc-content-ai-{{ ep.id }}"
-                            class="bg-surface-base p-2 rounded-lg border border-white/[0.06]">
+                            class="bg-surface-elevated p-3 rounded-lg border border-primary-500/20">
                             <div
-                                class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-primary-500/20 text-primary-400 tracking-wide mb-1.5 uppercase">
+                                class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-primary-500/20 text-primary-400 tracking-wide mb-2 uppercase">
                                 ✨ AI Summary
                             </div>
-                            <div class="text-text-primary text-sm leading-relaxed">
+                            <div
+                                class="text-white text-sm leading-relaxed [&>ul]:list-disc [&>ul]:pl-4 [&>ul]:space-y-1 [&>li]:text-gray-200 [&>p]:text-gray-200">
                                 {{ ep.ai_summary|simple_markdown|safe }}
                             </div>
                         </div>
