@@ -72,9 +72,11 @@ class AudioProcessor:
             concat_inputs.append(f"[a{i}]")
             
         filter_str = ";".join(filter_parts)
-        # Output to intermediate [out_concat], then force format again before encoder
+        # Output to intermediate [out_concat], then force format/padding before encoder
+        # asetnsamples=n=1152 ensures standard MP3 frame boundaries
+        # sample_fmts=s16p ensures we use signed 16-bit planar integers (avoiding float padding issues)
         concat_str = "".join(concat_inputs) + f"concat=n={len(keep_segments)}:v=0:a=1[out_concat]"
-        format_str = f"[out_concat]aformat=sample_rates=44100:channel_layouts=stereo[out]"
+        format_str = f"[out_concat]asetnsamples=n=1152,aformat=sample_rates=44100:channel_layouts=stereo:sample_fmts=s16p[out]"
         full_filter = f"{filter_str};{concat_str};{format_str}"
         
         cmd = [
