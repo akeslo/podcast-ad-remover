@@ -421,10 +421,12 @@
     #episodes-grid[data-view="list"] .episode-card h3 {
         grid-area: title;
         display: flex;
+        flex-wrap: wrap;
         align-items: center;
-        height: 52px;
+        height: auto;
+        min-height: 52px;
         margin: 0 !important;
-        padding: 0 1.5rem;
+        padding: 0.5rem 1.5rem;
         font-size: 0.92rem;
         font-weight: 600;
         color: var(--text-primary);
@@ -551,8 +553,9 @@
         }
 
         #episodes-grid[data-view="list"] .episode-card h3 span.block {
-            display: inline !important;
-            margin: 0 !important;
+            display: block !important;
+            width: 100% !important;
+            margin-top: 0.75rem !important;
         }
 
         #episodes-grid[data-view="list"] .group\/ep-desc {
