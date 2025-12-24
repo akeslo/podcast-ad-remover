@@ -675,8 +675,7 @@
                     </button>
                     <!-- Dropdown Menu -->
                     <div id="menu-{{ ep.id }}"
-                        class="fixed w-52 rounded-xl shadow-2xl bg-surface-elevated border border-white/10 hidden z-[9999]"
-                        style="top: 0; right: 0;">
+                        class="absolute right-0 top-full mt-2 w-52 rounded-xl shadow-2xl bg-surface-elevated border border-white/10 hidden z-[9999]">
                         <div class="p-1">
                             {% if ep.transcript_path %}
                             <a href="/episodes/{{ ep.id }}/transcript"
@@ -854,50 +853,16 @@
     }
 
     function toggleDropdown(e, btn, id) {
-        console.log('toggleDropdown called');
-        console.log('Event:', e);
-        console.log('Button:', btn);
-        console.log('ID:', id);
-
         e.stopPropagation();
         const el = document.getElementById(id);
-        console.log('Found element:', el);
 
-        if (!el) {
-            console.error('Menu element not found:', id);
-            return;
-        }
+        if (!el) return;
 
         if (el.classList.contains('hidden')) {
-            console.log('Menu is hidden, opening...');
             // Close all other dropdowns first
             document.querySelectorAll('[id^=menu-]').forEach(x => x.classList.add('hidden'));
-
-            // Calculate position based on button location
-            const rect = btn.getBoundingClientRect();
-            console.log('Button rect:', rect);
-            const menuWidth = 208; // w-52 = 13rem = 208px
-
-            // Position below button, align right edge of menu with right edge of button
-            const top = rect.bottom + 8;
-            // Calculate left so menu's right edge aligns with button's right edge
-            let left = rect.right - menuWidth;
-            // Make sure menu doesn't go off left edge
-            if (left < 8) left = 8;
-            // Make sure menu doesn't go off right edge
-            if (left + menuWidth > window.innerWidth - 8) {
-                left = window.innerWidth - menuWidth - 8;
-            }
-            console.log('Setting position - top:', top, 'left:', left);
-
-            el.style.top = top + 'px';
-            el.style.left = left + 'px';
-            el.style.right = 'auto';
-
             el.classList.remove('hidden');
-            console.log('Menu opened, classes:', el.className);
         } else {
-            console.log('Menu is visible, closing...');
             el.classList.add('hidden');
         }
     }
