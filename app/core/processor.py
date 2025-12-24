@@ -763,13 +763,13 @@ class Processor:
                                 except Exception as e:
                                     logger.warning(f"Failed to delete empty folder {ep_path}: {e}")
                     
-                    # Check if subscription folder is empty
-                    if os.path.exists(sub_path) and not os.listdir(sub_path):
-                        try:
-                            os.rmdir(sub_path)
-                            logger.info(f"Deleted empty subscription folder: {subscription_folder}")
-                        except Exception as e:
-                            logger.warning(f"Failed to delete empty subscription folder {sub_path}: {e}")
+                        # Check if subscription folder is empty (inside the loop where sub_path is defined)
+                        if os.path.exists(sub_path) and not os.listdir(sub_path):
+                            try:
+                                os.rmdir(sub_path)
+                                logger.info(f"Deleted empty subscription folder: {subscription_folder}")
+                            except Exception as e:
+                                logger.warning(f"Failed to delete empty subscription folder {sub_path}: {e}")
 
                     if deleted_folders > 0:
                         logger.info(f"Cleaned up {deleted_folders} empty episode folders")
