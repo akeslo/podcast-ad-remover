@@ -105,8 +105,8 @@
     <button onclick="toggleQueue()"
         class="flex items-center justify-between w-full text-left py-2 text-text-secondary hover:text-text-primary transition-colors">
         <span>Show/Hide Details</span>
-        <svg id="queue-chevron" class="w-5 h-5 transform transition-transform rotate-180" fill="none" stroke="currentColor"
-            viewBox="0 0 24 24">
+        <svg id="queue-chevron" class="w-5 h-5 transform transition-transform rotate-180" fill="none"
+            stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
         </svg>
     </button>
@@ -277,6 +277,7 @@
             {% endif %}
 
             <!-- Client Badges -->
+            {% if item.episode_count > 0 %}
             <div class="podcast-badges flex flex-wrap gap-2 mb-4">
                 <a href="{{ item.links.pocket_casts }}" class="badge-soft">Pocket Casts</a>
                 <a href="/subscribe/apple?url={{ item.links.apple | urlencode }}" class="badge-soft">Apple</a>
@@ -284,6 +285,11 @@
                 <a href="{{ item.links.castbox }}" class="badge-soft">Castbox</a>
                 <a href="{{ item.links.podcast_addict }}" class="badge-soft">Podcast Addict</a>
             </div>
+            {% else %}
+            <div class="mb-4 text-sm text-text-muted italic">
+                Feed links will appear once episodes are processed
+            </div>
+            {% endif %}
 
             <!-- Episodes Preview -->
             <div class="border-t border-white/[0.06] pt-4 mb-4">
@@ -320,6 +326,7 @@
 
             <!-- Footer -->
             <div class="podcast-footer flex justify-between items-center pt-4 border-t border-white/[0.06]">
+                {% if item.episode_count > 0 %}
                 <a href="{{ item.links.direct }}" target="_blank"
                     class="text-sm text-primary-400 hover:text-primary-300 flex items-center gap-1.5">
                     <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
@@ -328,6 +335,9 @@
                     </svg>
                     RSS Feed
                 </a>
+                {% else %}
+                <span class="text-sm text-text-muted">Waiting for episodes...</span>
+                {% endif %}
                 <span class="badge-success">Active</span>
             </div>
         </div>
