@@ -339,47 +339,55 @@
         border-bottom: 1px solid rgba(255, 255, 255, 0.03);
     }
 
-    /* Mobile List View - Stacked Layout */
+    /* Mobile: Use card view instead of list view */
     @media (max-width: 768px) {
+
+        /* Force card layout on mobile by resetting grid */
+        #episodes-grid[data-view="list"] {
+            display: grid !important;
+            grid-template-columns: 1fr !important;
+            gap: 1rem !important;
+        }
+
         #episodes-grid[data-view="list"] .episode-card {
-            grid-template-columns: 40px 1fr auto;
-            grid-template-areas:
-                "check meta actions"
-                "check title actions"
-                "desc  desc desc";
-            padding: 0.75rem 0.5rem;
-            min-height: auto;
-            gap: 0.25rem;
+            display: flex !important;
+            flex-direction: column !important;
+            padding: 1rem !important;
+            min-height: auto !important;
+            grid-template-columns: unset !important;
+            grid-template-areas: unset !important;
         }
 
-        #episodes-grid[data-view="list"] .episode-card .date-relative {
-            height: auto;
-            font-size: 0.65rem;
-        }
-
-        #episodes-grid[data-view="list"] .episode-card .flex.items-center.gap-2.text-\[11px\]>span:last-child {
-            height: auto;
-            font-size: 0.65rem;
+        /* Reset all grid areas to display normally */
+        #episodes-grid[data-view="list"] .episode-card>div,
+        #episodes-grid[data-view="list"] .episode-card h3,
+        #episodes-grid[data-view="list"] .episode-card .date-relative,
+        #episodes-grid[data-view="list"] .episode-card .flex {
+            grid-area: unset !important;
+            height: auto !important;
+            display: flex !important;
         }
 
         #episodes-grid[data-view="list"] .episode-card h3 {
-            grid-area: title;
-            white-space: normal;
-            overflow: visible;
-            text-overflow: unset;
-            padding: 0;
-            height: auto;
-            font-size: 0.85rem;
-            line-height: 1.3;
+            white-space: normal !important;
+            overflow: visible !important;
+            text-overflow: unset !important;
+            font-size: 1rem !important;
+            margin-bottom: 0.5rem !important;
+            padding: 0 !important;
         }
 
-        #episodes-grid[data-view="list"] .episode-card h3 span.block {
-            display: inline;
-            margin-top: 0;
+        /* Show checkbox on mobile */
+        #episodes-grid[data-view="list"] .episode-card>div:first-child {
+            position: absolute !important;
+            top: 1rem !important;
+            left: 1rem !important;
         }
 
+        /* Actions at bottom */
         #episodes-grid[data-view="list"] .episode-card>div:last-child {
-            height: auto;
+            position: static !important;
+            margin-top: 0.75rem !important;
             padding: 0 !important;
         }
     }
