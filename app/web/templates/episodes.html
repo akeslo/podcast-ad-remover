@@ -479,7 +479,6 @@
         width: 100%;
         padding: 1.5rem 2rem 2rem 158px;
         background: rgba(0, 0, 0, 0.2);
-        border-top: 1px solid rgba(255, 255, 255, 0.03);
         margin: 0;
         color: var(--text-secondary);
         font-size: 0.9rem;
@@ -616,7 +615,7 @@
                     FAILED
                 </span>
                 {% endif %}
-                <span class="block mt-1.5">{{ ep.title }}{% if ep.listen_count and ep.listen_count > 0 %} <span
+                <span class="block mt-3">{{ ep.title }}{% if ep.listen_count and ep.listen_count > 0 %} <span
                         class="ml-3 text-primary-400 text-[11px] font-bold tracking-wider uppercase">{{ ep.listen_count
                         }} play{% if ep.listen_count != 1 %}s{% endif %}</span>{% endif %}</span>
             </h3>

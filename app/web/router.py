@@ -1327,6 +1327,15 @@ async def view_transcript(id: int, request: Request):
                 data = json.load(f)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error reading transcript: {str(e)}")
+    
+    def format_duration(seconds: int) -> str:
+        if not seconds:
+            return "-"
+        m, s = divmod(seconds, 60)
+        h, m = divmod(m, 60)
+        if h > 0:
+            return f"{h}:{m:02d}:{s:02d}"
+        return f"{m}:{s:02d}"
 
         return templates.TemplateResponse("transcript.html", {
             "request": request,
