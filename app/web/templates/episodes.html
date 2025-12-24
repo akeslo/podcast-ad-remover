@@ -317,39 +317,32 @@
     }
 
     #episodes-grid[data-view="list"] .episode-card {
-        flex-direction: column;
-        padding: 0;
-        min-height: auto;
-    }
-
-    /* Checkbox Container in List View */
-    #episodes-grid[data-view="list"] .episode-card>div:first-child {
-        position: absolute !important;
-        top: 18px !important;
-        left: 12px !important;
-        opacity: 1 !important;
-        z-index: 30;
-    }
-
-    /* Column Row Container */
-    #episodes-grid[data-view="list"] .episode-card>div:nth-child(2) {
         display: grid;
-        grid-template-columns: 50px 100px 80px 1fr;
+        grid-template-columns: 48px 100px 80px 1fr 200px;
         align-items: center;
-        gap: 1.5rem;
-        padding: 0.75rem 1.25rem;
-        width: 100%;
-        padding-right: 200px;
-        /* Space for absolute actions */
+        padding: 0.5rem 1rem;
+        min-height: auto;
+        gap: 0;
     }
 
-    /* Grid Mapping */
-    #episodes-grid[data-view="list"] .episode-card .flex.justify-between.items-start.mb-3 {
+    /* Column 1: Checkbox */
+    #episodes-grid[data-view="list"] .episode-card>div:first-child {
+        position: static !important;
+        opacity: 1 !important;
+        display: flex;
+        justify-content: center;
+        grid-column: 1;
+        padding: 0;
+        z-index: 10;
+    }
+
+    /* Main Content Wrapper (Display Contents to join parent grid) */
+    #episodes-grid[data-view="list"] .episode-card>div:nth-child(2) {
         display: contents;
-        /* Drop children into the card's grid */
     }
 
-    #episodes-grid[data-view="list"] .episode-card .flex.justify-between.items-start.mb-3>div:first-child {
+    /* Metadata Row Mapping */
+    #episodes-grid[data-view="list"] .episode-card .flex.justify-between.items-start.mb-3 {
         display: contents;
     }
 
@@ -358,52 +351,55 @@
         font-weight: 700;
         color: var(--text-primary);
         white-space: nowrap;
+        font-size: 0.75rem;
     }
 
-    #episodes-grid[data-view="list"] .episode-card .flex.justify-between.items-start.mb-3>div:first-child>span:last-child {
+    /* Duration mapping */
+    #episodes-grid[data-view="list"] .episode-card .flex.items-center.gap-2.text-\[11px\]>span:last-child {
         grid-column: 3;
         color: var(--text-muted);
         text-align: center;
+        font-size: 0.75rem;
     }
 
+    /* Column 4: Title */
     #episodes-grid[data-view="list"] .episode-card h3 {
         grid-column: 4;
-        margin-bottom: 0 !important;
+        margin: 0 !important;
+        padding: 0 1rem;
         font-size: 0.95rem;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+        order: 4;
     }
 
-    /* Hide redundant dot and status icons in top bar */
+    /* Hide redundant elements in list view */
     #episodes-grid[data-view="list"] .episode-card .text-white\/10,
-    #episodes-grid[data-view="list"] .episode-card .flex.items-center.gap-3 {
+    #episodes-grid[data-view="list"] .episode-card .flex.items-center.gap-3:not(.col-5) {
         display: none;
     }
 
-    /* Expandable Description */
+    /* Expandable Description (Span all columns) */
     #episodes-grid[data-view="list"] .group\/ep-desc {
         display: none;
         grid-column: 1 / -1;
-        padding: 0.5rem 1.25rem 1.25rem 230px;
-        /* Aligned under title */
-        margin-top: -0.5rem;
+        padding: 1rem 1rem 1rem 160px;
+        border-top: 1px solid rgba(255, 255, 255, 0.03);
+        margin-top: 0.5rem;
     }
 
     #episodes-grid[data-view="list"] .episode-card.expanded .group\/ep-desc {
         display: block;
     }
 
-    /* Actions Alignment */
+    /* Column 5: Actions */
     #episodes-grid[data-view="list"] .episode-card>div:last-child {
-        position: absolute;
-        top: 0;
-        right: 0;
-        height: 52px;
-        width: auto;
-        padding: 0 1.25rem;
-        border-top: none;
-        border-left: 1px solid rgba(255, 255, 255, 0.05);
+        grid-column: 5;
+        position: static !important;
+        padding: 0;
+        margin: 0;
+        border: none;
         background: transparent;
         display: flex;
         align-items: center;
@@ -412,13 +408,25 @@
         z-index: 20;
     }
 
-    #episodes-grid[data-view="list"] .episode-card .mt-4.bg-surface-base {
-        display: none;
+    /* Standardize button sizes for list view alignment */
+    #episodes-grid[data-view="list"] .episode-card>div:last-child a,
+    #episodes-grid[data-view="list"] .episode-card>div:last-child button {
+        height: 36px;
+        min-width: 36px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0 0.5rem;
     }
 
-    /* Progress padding adjustment */
-    #episodes-grid[data-view="list"] .episode-card.expanded .group\/ep-desc details {
-        margin-top: 1rem;
+    #episodes-grid[data-view="list"] .episode-card>div:last-child .rounded-full {
+        width: 36px;
+        height: 36px;
+        padding: 0;
+    }
+
+    #episodes-grid[data-view="list"] .episode-card .mt-4.bg-surface-base {
+        display: none;
     }
 </style>
 
@@ -614,7 +622,18 @@
                         <path d="M8 5v14l11-7z" />
                     </svg>
                 </a>
+                {% elif ep.status == 'unprocessed' or ep.status == 'ignored' %}
+                <button onclick="downloadEpisode({{ ep.id }})"
+                    class="p-2 text-text-muted hover:text-white hover:bg-white/10 rounded-full transition-colors"
+                    title="Download">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+                    </svg>
+                </button>
+                {% endif %}
 
+                <!-- Options Menu (Always show if not ignored or failed?) -->
                 <div class="relative inline-block text-left">
                     <button onclick="toggleDropdown('menu-{{ ep.id }}')"
                         class="p-2 text-text-muted hover:text-white transition-colors rounded-full hover:bg-white/10"
@@ -649,16 +668,6 @@
                         </div>
                     </div>
                 </div>
-                {% elif ep.status == 'unprocessed' or ep.status == 'ignored' %}
-                <button onclick="downloadEpisode({{ ep.id }})"
-                    class="p-2 text-text-muted hover:text-white hover:bg-white/10 rounded-full transition-colors"
-                    title="Download">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                            d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
-                    </svg>
-                </button>
-                {% endif %}
             </div>
         </div>
     </div>
@@ -743,7 +752,10 @@
     });
 
     function toggleDescription(id) {
-        // Logic moved to inline onclick for better reliability and performance
+        const card = document.getElementById('card-' + id);
+        if (card) {
+            card.classList.toggle('expanded');
+        }
     }
 
 
