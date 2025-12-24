@@ -190,6 +190,7 @@
         <option value="downloaded">Episodes Downloaded</option>
         <option value="processing">Processing</option>
         <option value="recent">Recently Updated</option>
+        <option value="played">Most Played</option>
     </select>
 
     <select id="podcast-sort"
@@ -240,7 +241,7 @@
 <div id="podcast-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
     {% for item in subscriptions %}
     <article class="podcast-card" data-title="{{ item.sub.title|lower }}" data-episodes="{{ item.episode_count }}"
-        data-processing="{{ item.processing_count|default(0) }}">
+        data-processing="{{ item.processing_count|default(0) }}" data-listens="{{ item.total_listens|default(0) }}">
         <!-- Artwork -->
         {% if item.sub.image_url %}
         <div class="podcast-artwork">
@@ -522,6 +523,7 @@
             let visibleCards = cards.filter(card => {
                 const title = card.dataset.title || '';
                 const processing = parseInt(card.dataset.processing) || 0;
+                const listens = parseInt(card.dataset.listens) || 0;
 
                 // Search filter
                 if (searchTerm && !title.includes(searchTerm)) return false;
@@ -529,6 +531,7 @@
                 // Status filter
                 if (filterVal === 'processing' && processing === 0) return false;
                 if (filterVal === 'downloaded' && (parseInt(card.dataset.episodes) || 0) === 0) return false;
+                if (filterVal === 'played' && listens === 0) return false;
 
                 return true;
             });

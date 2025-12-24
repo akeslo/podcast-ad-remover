@@ -973,6 +973,7 @@ def _render_index(request: Request, error: str = None):
             "links": generate_rss_links(request, sub, global_settings, user),
             "episodes": [dict(ep) for ep in episodes],
             "episode_count": len(episodes),
+            "total_listens": ep_repo.get_subscription_listen_count(sub.id),
             "latest_ai_summary": latest_summary,
             "latest_description": latest_description
         })

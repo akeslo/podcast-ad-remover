@@ -276,6 +276,7 @@
         <button onclick="filterEpisodes('not-downloaded')" data-filter="not-downloaded"
             class="filter-btn badge-soft">Not Downloaded</button>
         <button onclick="filterEpisodes('ignored')" data-filter="ignored" class="filter-btn badge-soft">Deleted</button>
+        <button onclick="filterEpisodes('played')" data-filter="played" class="filter-btn badge-soft">Played</button>
     </div>
 </div>
 
@@ -566,7 +567,8 @@
     {% for ep in episodes %}
     <div class="episode-card card flex flex-col relative overflow-visible group transition-all duration-300 h-full border hover:border-white/10"
         data-status="{{ ep.status }}" data-manual="{{ 'true' if ep.is_manual_download else 'false' }}"
-        data-title="{{ ep.title|lower }}" data-date="{{ ep.pub_date }}" id="card-{{ ep.id }}">
+        data-title="{{ ep.title|lower }}" data-date="{{ ep.pub_date }}" data-listen-count="{{ ep.listen_count or 0 }}"
+        id="card-{{ ep.id }}">
 
         <!-- Batch Selection Checkbox -->
         <div class="absolute top-4 left-4 z-20 opacity-0 group-hover:opacity-100 transition-opacity"
@@ -850,6 +852,7 @@
             else if (filter === 'manual') show = card.getAttribute('data-manual') === 'true';
             else if (filter === 'not-downloaded') show = (status === 'unprocessed' || status === 'failed' || status === 'pending');
             else if (filter === 'ignored') show = status === 'ignored';
+            else if (filter === 'played') show = parseInt(card.getAttribute('data-listen-count') || '0') > 0;
 
             // Search Logic
             if (searchTerm && !title.includes(searchTerm)) show = false;
