@@ -1169,9 +1169,9 @@
             // Set attribute
             grid.setAttribute('data-view', mode);
 
-            // Save preference (reset to v3 for the new default)
+            // Save preference (reset to v4 for the new default)
             try {
-                localStorage.setItem('episodes-view-mode-v3', mode);
+                localStorage.setItem('episodes-view-mode-v4', mode);
             } catch (e) { }
 
             // Update buttons
@@ -1189,8 +1189,8 @@
             });
         }
 
-        // Init view (using v3 to force the new Grid default)
-        const savedView = localStorage.getItem('episodes-view-mode-v3') || 'grid';
+        // Init view (using v4 to force the new Grid default)
+        const savedView = localStorage.getItem('episodes-view-mode-v4') || 'grid';
         setEpisodeView(savedView);
 
         // Attach listeners
@@ -1251,6 +1251,4 @@
         </button>
     </div>
 </div>
-
-</script>
 {% endblock %}
