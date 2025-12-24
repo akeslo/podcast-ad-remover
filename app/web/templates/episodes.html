@@ -499,12 +499,14 @@
             font-size: 0.875rem !important;
             white-space: normal !important;
             word-wrap: break-word !important;
-            line-height: 1.4 !important;
+            line-height: 1.2 !important;
+            /* Tighter line height for better centering */
         }
 
         #episodes-grid[data-view="list"] .episode-card h3 span.block {
             display: inline !important;
-            margin-top: 0 !important;
+            margin: 0 !important;
+            /* Remove margin from title span as well */
         }
 
         #episodes-grid[data-view="list"] .episode-card .list-actions {
@@ -1277,9 +1279,9 @@
             // Set attribute
             grid.setAttribute('data-view', mode);
 
-            // Save preference (reset to v2 for the new default)
+            // Save preference (reset to v3 for the new default)
             try {
-                localStorage.setItem('episodes-view-mode-v2', mode);
+                localStorage.setItem('episodes-view-mode-v3', mode);
             } catch (e) { }
 
             // Update buttons
@@ -1297,8 +1299,8 @@
             });
         }
 
-        // Init view (using v2 to force the new Grid default)
-        const savedView = localStorage.getItem('episodes-view-mode-v2') || 'grid';
+        // Init view (using v3 to force the new Grid default)
+        const savedView = localStorage.getItem('episodes-view-mode-v3') || 'grid';
         setEpisodeView(savedView);
 
         // Attach listeners
@@ -1360,38 +1362,5 @@
     </div>
 </div>
 
-<style>
-    /* List View: Robust Checkbox Static Placement */
-    #episodes-grid[data-view="list"] .checkbox-wrapper {
-        position: static !important;
-        opacity: 1 !important;
-        visibility: visible !important;
-        transform: none !important;
-        pointer-events: auto !important;
-        grid-area: check;
-        display: flex !important;
-        /* Force flex for centering */
-        justify-content: center !important;
-        align-items: center !important;
-        width: 100% !important;
-        height: 52px !important;
-    }
-
-    /* Mobile: Ensure room for absolute checkbox */
-    @media (max-width: 768px) {
-        #episodes-grid[data-view="list"] .episode-card {
-            padding-left: 3.5rem !important;
-            position: relative;
-        }
-
-        #episodes-grid[data-view="list"] .checkbox-wrapper {
-            position: absolute !important;
-            left: 0.75rem !important;
-            top: 50% !important;
-            transform: translateY(-50%) !important;
-            width: auto !important;
-            display: block !important;
-        }
-    }
-</style>
+</script>
 {% endblock %}
