@@ -251,6 +251,18 @@ class EpisodeRepository:
                 (subscription_id,)
             ).fetchone()
             return row['total'] if row and row['total'] else 0
+    
+    def get_by_subscription_and_filename(self, subscription_id: int, filename: str) -> Optional[Episode]:
+        """Find episode by subscription and local filename (for audio tracking)."""
+        with get_db_connection() as conn:
+            # Try exact match first
+            row = conn.execute(
+                "SELECT * FROM episodes WHERE subscription_id = ? AND local_filename LIKE ?",
+                (subscription_id, f"%{filename}")
+            ).fetchone()
+            if row:
+                return Episode.model_validate(dict(row))
+            return None
 
     def soft_delete(self, id: int):
         """Mark episode as ignored and clear paths to free space."""
