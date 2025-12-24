@@ -35,8 +35,8 @@
     <div>
         <label class="block text-sm font-medium text-text-secondary mb-2">
             Summary Generation Template
-            <span class="text-xs text-text-muted">(Required variables: <code
-                    class="text-primary-400">{transcript_context}</code>, <code
+            <span class="text-xs text-text-muted">(Required variable: <code
+                    class="text-primary-400">{transcript_context}</code>. Optional: <code
                     class="text-primary-400">{targets}</code>)</span>
         </label>
         <textarea name="summary_prompt_template" id="summary_prompt_template"
@@ -57,7 +57,7 @@
 
     const requiredVars = {
         'ad_prompt_base': ['{targets}', '{custom_instr}'],
-        'summary_prompt_template': ['{transcript_context}', '{targets}']
+        'summary_prompt_template': ['{transcript_context}']
     };
 
     function showAlert(message, type = 'error') {
