@@ -513,25 +513,25 @@
                 title="{{ ep.title }}">
                 {% if ep.status == 'completed' %}
                 <span
-                    class="inline-flex shrink-0 items-center gap-1.5 px-2 py-1 rounded-full bg-success/10 text-success text-[8px] font-black tracking-widest leading-none border border-success/10">
+                    class="inline-flex shrink-0 items-center gap-1.5 px-2 py-1 rounded-full bg-success/10 text-success text-[7px] font-black tracking-widest leading-none border border-success/10">
                     <span class="w-1 h-1 rounded-full bg-success"></span>
                     DOWNLOADED
                 </span>
                 {% elif ep.status == 'processing' %}
                 <span
-                    class="inline-flex shrink-0 items-center gap-1.5 px-2 py-1 rounded-full bg-warning/10 text-warning text-[8px] font-black tracking-widest leading-none border border-warning/10 animate-pulse">
+                    class="inline-flex shrink-0 items-center gap-1.5 px-2 py-1 rounded-full bg-warning/10 text-warning text-[7px] font-black tracking-widest leading-none border border-warning/10 animate-pulse">
                     <span class="w-1 h-1 rounded-full bg-warning"></span>
                     PROCESSING
                 </span>
                 {% elif ep.status == 'ignored' or ep.status == 'deleted' %}
                 <span
-                    class="inline-flex shrink-0 items-center gap-1.5 px-2 py-1 rounded-full bg-white/5 text-text-muted/60 text-[8px] font-black tracking-widest leading-none border border-white/5">
+                    class="inline-flex shrink-0 items-center gap-1.5 px-2 py-1 rounded-full bg-white/5 text-text-muted/60 text-[7px] font-black tracking-widest leading-none border border-white/5">
                     <span class="w-1 h-1 rounded-full bg-text-muted/40"></span>
                     DELETED
                 </span>
                 {% elif ep.status == 'failed' %}
                 <span
-                    class="inline-flex shrink-0 items-center gap-1.5 px-2 py-1 rounded-full bg-error/10 text-error text-[8px] font-black tracking-widest leading-none border border-error/10">
+                    class="inline-flex shrink-0 items-center gap-1.5 px-2 py-1 rounded-full bg-error/10 text-error text-[7px] font-black tracking-widest leading-none border border-error/10">
                     <span class="w-1 h-1 rounded-full bg-error"></span>
                     FAILED
                 </span>
