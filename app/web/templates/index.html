@@ -395,14 +395,16 @@
 
             data.forEach(pod => {
                 const el = document.createElement('div');
-                el.className = 'flex items-center gap-4 p-4 bg-surface-base rounded-xl border border-white/[0.06] hover:border-primary-500/30 transition-colors';
+                el.className = 'flex flex-col sm:flex-row sm:items-center gap-4 p-4 bg-surface-base rounded-xl border border-white/[0.06] hover:border-primary-500/30 transition-colors';
                 el.innerHTML = `
-                <img src="${pod.image}" class="w-14 h-14 rounded-lg object-cover bg-surface-hover">
-                <div class="flex-1 min-w-0">
-                    <h4 class="font-bold truncate">${pod.title}</h4>
-                    <p class="text-xs text-text-muted truncate">${pod.description}</p>
+                <div class="flex items-center gap-4 flex-1 min-w-0">
+                    <img src="${pod.image}" class="w-14 h-14 shrink-0 rounded-lg object-cover bg-surface-hover">
+                    <div class="min-w-0">
+                        <h4 class="font-bold text-sm sm:truncate">${pod.title}</h4>
+                        <p class="text-xs text-text-muted line-clamp-2 sm:truncate">${pod.description}</p>
+                    </div>
                 </div>
-                <form action="/add" method="post" class="flex items-center gap-2">
+                <form action="/add" method="post" class="flex items-center gap-2 sm:shrink-0">
                     <input type="hidden" name="feed_url" value="${pod.feed_url}">
                     <select name="initial_count" class="select text-sm py-2 min-w-[80px]" aria-label="Episodes to download">
                         ${optionsHtml}
