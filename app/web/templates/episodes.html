@@ -665,7 +665,8 @@
 
                 <!-- Options Menu (Always show if not ignored or failed?) -->
                 <div class="relative inline-block text-left">
-                    <button onclick="toggleDropdown(event, this, 'menu-{{ ep.id }}')"
+                    <button
+                        onclick="showActionSheet(event, {{ ep.id }}, {{ 'true' if ep.transcript_path else 'false' }}, {{ 'true' if (ep.report_path or ep.ad_report_path) else 'false' }})"
                         class="p-2 text-text-muted hover:text-white transition-colors rounded-full hover:bg-white/10"
                         title="More">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -728,6 +729,24 @@
         No episodes found.
     </div>
     {% endfor %}
+</div>
+
+<!-- Global Action Sheet Modal -->
+<div id="action-sheet"
+    class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden z-[9999] flex items-center justify-center"
+    onclick="closeActionSheet()">
+    <div class="bg-surface-elevated border border-white/10 rounded-2xl w-72 max-w-[90vw] shadow-2xl"
+        onclick="event.stopPropagation()">
+        <div class="p-2 space-y-1" id="action-sheet-content">
+            <!-- Content populated by JS -->
+        </div>
+        <div class="border-t border-white/10 p-2">
+            <button onclick="closeActionSheet()"
+                class="w-full py-3 text-sm font-semibold text-text-secondary hover:text-white rounded-xl hover:bg-white/5 transition-colors">
+                Cancel
+            </button>
+        </div>
+    </div>
 </div>
 
 <script>
@@ -852,19 +871,40 @@
         } catch (e) { alert('Error starting download.'); }
     }
 
-    function toggleDropdown(e, btn, id) {
+    function showActionSheet(e, episodeId, hasTranscript, hasReport) {
         e.stopPropagation();
-        const el = document.getElementById(id);
+        const sheet = document.getElementById('action-sheet');
+        const content = document.getElementById('action-sheet-content');
 
-        if (!el) return;
-
-        if (el.classList.contains('hidden')) {
-            // Close all other dropdowns first
-            document.querySelectorAll('[id^=menu-]').forEach(x => x.classList.add('hidden'));
-            el.classList.remove('hidden');
-        } else {
-            el.classList.add('hidden');
+        // Build menu items
+        let html = '';
+        if (hasTranscript) {
+            html += `<a href="/episodes/${episodeId}/transcript" class="block w-full text-left px-4 py-3 text-sm font-semibold text-text-secondary hover:text-white hover:bg-white/5 rounded-xl flex items-center gap-3">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                View Transcript
+            </a>`;
         }
+        if (hasReport) {
+            html += `<a href="/artifacts/report/${episodeId}" target="_blank" class="block w-full text-left px-4 py-3 text-sm font-semibold text-text-secondary hover:text-white hover:bg-white/5 rounded-xl flex items-center gap-3">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                View Report
+            </a>`;
+        }
+        html += `<button onclick="closeActionSheet(); processEpisode(${episodeId})" class="w-full text-left px-4 py-3 text-sm font-semibold text-text-secondary hover:text-white hover:bg-white/5 rounded-xl flex items-center gap-3">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+            Reprocess Episode
+        </button>`;
+        html += `<button onclick="closeActionSheet(); deleteEpisode(${episodeId})" class="w-full text-left px-4 py-3 text-sm font-semibold text-red-400 hover:bg-red-500/10 rounded-xl flex items-center gap-3">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+            Delete File
+        </button>`;
+
+        content.innerHTML = html;
+        sheet.classList.remove('hidden');
+    }
+
+    function closeActionSheet() {
+        document.getElementById('action-sheet').classList.add('hidden');
     }
 
     window.onclick = function (event) {
