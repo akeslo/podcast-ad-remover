@@ -322,10 +322,19 @@
         min-height: auto;
     }
 
+    /* Checkbox Container in List View */
+    #episodes-grid[data-view="list"] .episode-card>div:first-child {
+        position: absolute !important;
+        top: 18px !important;
+        left: 12px !important;
+        opacity: 1 !important;
+        z-index: 30;
+    }
+
     /* Column Row Container */
     #episodes-grid[data-view="list"] .episode-card>div:nth-child(2) {
         display: grid;
-        grid-template-columns: 120px 80px 1fr;
+        grid-template-columns: 50px 100px 80px 1fr;
         align-items: center;
         gap: 1.5rem;
         padding: 0.75rem 1.25rem;
@@ -345,19 +354,20 @@
     }
 
     #episodes-grid[data-view="list"] .episode-card .date-relative {
-        grid-column: 1;
+        grid-column: 2;
         font-weight: 700;
         color: var(--text-primary);
         white-space: nowrap;
     }
 
     #episodes-grid[data-view="list"] .episode-card .flex.justify-between.items-start.mb-3>div:first-child>span:last-child {
-        grid-column: 2;
+        grid-column: 3;
         color: var(--text-muted);
+        text-align: center;
     }
 
     #episodes-grid[data-view="list"] .episode-card h3 {
-        grid-column: 3;
+        grid-column: 4;
         margin-bottom: 0 !important;
         font-size: 0.95rem;
         white-space: nowrap;
@@ -375,7 +385,7 @@
     #episodes-grid[data-view="list"] .group\/ep-desc {
         display: none;
         grid-column: 1 / -1;
-        padding: 0.5rem 1.25rem 1.25rem 220px;
+        padding: 0.5rem 1.25rem 1.25rem 230px;
         /* Aligned under title */
         margin-top: -0.5rem;
     }
@@ -384,24 +394,31 @@
         display: block;
     }
 
-    /* Actions on the right */
+    /* Actions Alignment */
     #episodes-grid[data-view="list"] .episode-card>div:last-child {
         position: absolute;
         top: 0;
         right: 0;
         height: 52px;
-        /* Match top row height */
+        width: auto;
         padding: 0 1.25rem;
         border-top: none;
         border-left: 1px solid rgba(255, 255, 255, 0.05);
         background: transparent;
         display: flex;
         align-items: center;
+        justify-content: flex-end;
         gap: 0.5rem;
+        z-index: 20;
     }
 
     #episodes-grid[data-view="list"] .episode-card .mt-4.bg-surface-base {
         display: none;
+    }
+
+    /* Progress padding adjustment */
+    #episodes-grid[data-view="list"] .episode-card.expanded .group\/ep-desc details {
+        margin-top: 1rem;
     }
 </style>
 
