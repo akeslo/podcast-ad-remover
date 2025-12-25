@@ -1278,14 +1278,15 @@ async def view_subscription(request: Request, id: int):
     })
 
 @router.get("/api/subscriptions/{id}/episodes")
-async def get_subscription_episodes_api(id: int, limit: int = 20, offset: int = 0):
-    """Return episodes for a subscription as JSON for lazy loading."""
+async def get_subscription_episodes_api(id: int, limit: int = 20, offset: int = 0, search: str = None):
+    """Return episodes for a subscription as JSON for lazy loading. Supports search by title."""
     sub = sub_repo.get_by_id(id)
     if not sub:
         raise HTTPException(status_code=404, detail="Subscription not found")
     
-    episodes = ep_repo.get_by_subscription_paginated(id, limit=limit, offset=offset)
-    total = ep_repo.count_by_subscription(id)
+    # Pass search to repository methods
+    episodes = ep_repo.get_by_subscription_paginated(id, limit=limit, offset=offset, search=search)
+    total = ep_repo.count_by_subscription(id, search=search)
     
     # Convert sqlite rows to dicts
     episodes_data = []
@@ -1301,6 +1302,7 @@ async def get_subscription_episodes_api(id: int, limit: int = 20, offset: int = 
         "total": total,
         "offset": offset,
         "limit": limit,
+        "search": search,
         "has_more": offset + len(episodes) < total,
         "subscription_slug": sub.slug
     }

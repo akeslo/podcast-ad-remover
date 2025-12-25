@@ -855,6 +855,11 @@
     let isLoading = false;
     let totalEpisodes = {{ total_episodes|default (0) }};
 
+    // Search State
+    let currentSearchTerm = '';
+    let searchDebounceTimer = null;
+    let isSearchMode = false;
+
     // Episode Card Template Generator
     function createEpisodeCardHTML(ep, subscriptionSlug) {
         const status = ep.status || 'unprocessed';
@@ -988,6 +993,124 @@
         isLoading = false;
     }
 
+    // Server-side search function with debounce
+    async function performServerSearch(searchTerm) {
+        if (isLoading) return;
+
+        const grid = document.getElementById('episodes-grid');
+        const loadMoreContainer = document.getElementById('load-more-container');
+        const countText = document.getElementById('episode-count');
+
+        // Clear search mode if empty
+        if (!searchTerm || searchTerm.trim() === '') {
+            if (isSearchMode) {
+                // Reset to normal mode - reload page to restore original pagination
+                window.location.reload();
+            }
+            return;
+        }
+
+        isLoading = true;
+        isSearchMode = true;
+        currentSearchTerm = searchTerm;
+
+        // Show loading state in count
+        countText.textContent = 'Searching...';
+
+        try {
+            // Fetch ALL matching episodes (use high limit for search)
+            const response = await fetch(`/api/subscriptions/${subscriptionId}/episodes?limit=500&offset=0&search=${encodeURIComponent(searchTerm)}`);
+            const data = await response.json();
+
+            // Clear existing cards and replace with search results
+            grid.innerHTML = '';
+
+            if (data.episodes && data.episodes.length > 0) {
+                data.episodes.forEach(ep => {
+                    const cardHTML = createEpisodeCardHTML(ep, data.subscription_slug);
+                    grid.insertAdjacentHTML('beforeend', cardHTML);
+                });
+
+                // Format dates for new cards
+                document.querySelectorAll('.date-relative').forEach(el => {
+                    const dateStr = el.getAttribute('data-date');
+                    const rel = timeAgo(dateStr);
+                    if (rel) el.textContent = rel;
+                });
+
+                countText.textContent = `Found ${data.total} matches for "${searchTerm}"`;
+            } else {
+                grid.innerHTML = '<div class="col-span-full text-center py-12 card text-text-muted">No episodes found matching your search.</div>';
+                countText.textContent = `No matches for "${searchTerm}"`;
+            }
+
+            // Hide load more in search mode
+            if (loadMoreContainer) loadMoreContainer.style.display = 'none';
+
+            // Apply current filter to search results
+            const currentFilter = localStorage.getItem('episode-filter-preference') || 'all';
+            applyFilterToCards(currentFilter);
+
+        } catch (error) {
+            console.error('Search failed:', error);
+            countText.textContent = 'Search failed. Please try again.';
+        }
+
+        isLoading = false;
+    }
+
+    // Apply filter only (no search query) - for use with search results
+    function applyFilterToCards(filter) {
+        const cards = document.querySelectorAll('.episode-card');
+        let visibleCount = 0;
+
+        cards.forEach(card => {
+            const status = card.getAttribute('data-status');
+            let show = false;
+
+            if (filter === 'all') show = true;
+            else if (filter === 'completed') show = status === 'completed';
+            else if (filter === 'manual') show = card.getAttribute('data-manual') === 'true';
+            else if (filter === 'not-downloaded') show = (status === 'unprocessed' || status === 'failed' || status === 'pending');
+            else if (filter === 'ignored') show = status === 'ignored';
+            else if (filter === 'played') show = parseInt(card.getAttribute('data-listen-count') || '0') > 0;
+
+            if (show) { card.classList.remove('hidden'); visibleCount++; }
+            else { card.classList.add('hidden'); }
+        });
+
+        return visibleCount;
+    }
+
+    // Debounced search input handler
+    function handleSearchInput(e) {
+        const searchTerm = e.target.value.trim();
+
+        // Clear existing timer
+        if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+
+        // For empty input, clear immediately
+        if (!searchTerm) {
+            if (isSearchMode) {
+                window.location.reload();
+            }
+            return;
+        }
+
+        // Debounce the search by 300ms
+        searchDebounceTimer = setTimeout(() => {
+            performServerSearch(searchTerm);
+        }, 300);
+    }
+
+    // Initialize search input listener
+    document.addEventListener('DOMContentLoaded', () => {
+        const searchInput = document.getElementById('episode-search');
+        if (searchInput) {
+            searchInput.addEventListener('input', handleSearchInput);
+        }
+    });
+
     // Batch Actions Functions
     function updateBatchActions() {
         const checkboxes = document.querySelectorAll('.episode-checkbox:checked');
@@ -1068,7 +1191,8 @@
 
     function filterEpisodes(filter) {
         const cards = document.querySelectorAll('.episode-card');
-        const searchTerm = document.getElementById('episode-search').value.toLowerCase();
+        const searchInput = document.getElementById('episode-search');
+        const searchTerm = searchInput ? searchInput.value.toLowerCase() : '';
         let visibleCount = 0;
 
         // Update active button state
@@ -1099,8 +1223,8 @@
             else if (filter === 'ignored') show = status === 'ignored';
             else if (filter === 'played') show = parseInt(card.getAttribute('data-listen-count') || '0') > 0;
 
-            // Search Logic
-            if (searchTerm && !title.includes(searchTerm)) show = false;
+            // Client-side search fallback (only for already-loaded episodes when not in server search mode)
+            if (!isSearchMode && searchTerm && !title.includes(searchTerm)) show = false;
 
             if (show) { card.classList.remove('hidden'); visibleCount++; }
             else { card.classList.add('hidden'); }
@@ -1108,9 +1232,16 @@
 
         // Update count text
         const countText = document.getElementById('episode-count');
-        if (searchTerm) countText.textContent = `Found ${visibleCount} matches`;
-        else if (filter === 'all') countText.textContent = `Showing all episodes (${visibleCount})`;
-        else countText.textContent = `Filtered: ${visibleCount} episodes`;
+        if (isSearchMode && currentSearchTerm) {
+            // In server search mode, show search-specific count
+            countText.textContent = `Found ${visibleCount} matches for "${currentSearchTerm}"`;
+        } else if (searchTerm && !isSearchMode) {
+            countText.textContent = `Found ${visibleCount} matches`;
+        } else if (filter === 'all') {
+            countText.textContent = `Showing all episodes (${visibleCount})`;
+        } else {
+            countText.textContent = `Filtered: ${visibleCount} episodes`;
+        }
     }
 
     function timeAgo(dateParam) {
