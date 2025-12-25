@@ -1233,12 +1233,14 @@ async def view_subscription(request: Request, id: int):
     sub = sub_repo.get_by_id(id)
     if not sub:
         return RedirectResponse(url="/")
-        
-    # Get episodes (we need to add this to repo)
-    # For now, raw SQL query or add method to repo
-    from app.infra.database import get_db_connection
-    with get_db_connection() as conn:
-        episodes = conn.execute("SELECT * FROM episodes WHERE subscription_id = ? ORDER BY pub_date DESC", (id,)).fetchall()
+    
+    # Initial page size for lazy loading
+    INITIAL_PAGE_SIZE = 20
+    
+    # Get first batch of episodes using pagination
+    episodes = ep_repo.get_by_subscription_paginated(id, limit=INITIAL_PAGE_SIZE, offset=0)
+    total_episodes = ep_repo.count_by_subscription(id)
+    has_more = total_episodes > INITIAL_PAGE_SIZE
     
     def format_duration(seconds: int) -> str:
         if not seconds:
@@ -1269,8 +1271,39 @@ async def view_subscription(request: Request, id: int):
         "links": links,
         "basename": lambda p: p.split('/')[-1] if p else '',
         "format_duration": format_duration,
-        "total_listens": total_listens
+        "total_listens": total_listens,
+        "total_episodes": total_episodes,
+        "has_more": has_more,
+        "page_size": INITIAL_PAGE_SIZE
     })
+
+@router.get("/api/subscriptions/{id}/episodes")
+async def get_subscription_episodes_api(id: int, limit: int = 20, offset: int = 0):
+    """Return episodes for a subscription as JSON for lazy loading."""
+    sub = sub_repo.get_by_id(id)
+    if not sub:
+        raise HTTPException(status_code=404, detail="Subscription not found")
+    
+    episodes = ep_repo.get_by_subscription_paginated(id, limit=limit, offset=offset)
+    total = ep_repo.count_by_subscription(id)
+    
+    # Convert sqlite rows to dicts
+    episodes_data = []
+    for ep in episodes:
+        ep_dict = dict(ep)
+        # Ensure pub_date is a string for JSON serialization
+        if ep_dict.get('pub_date') and hasattr(ep_dict['pub_date'], 'isoformat'):
+            ep_dict['pub_date'] = ep_dict['pub_date'].isoformat()
+        episodes_data.append(ep_dict)
+    
+    return {
+        "episodes": episodes_data,
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "has_more": offset + len(episodes) < total,
+        "subscription_slug": sub.slug
+    }
 
 @router.post("/subscriptions/{id}/settings")
 async def update_settings(

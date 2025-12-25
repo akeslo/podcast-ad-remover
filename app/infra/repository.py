@@ -126,6 +126,23 @@ class EpisodeRepository:
             rows = conn.execute("SELECT * FROM episodes WHERE subscription_id = ?", (subscription_id,)).fetchall()
             return [Episode.model_validate(dict(row)) for row in rows]
 
+    def get_by_subscription_paginated(self, subscription_id: int, limit: int = 20, offset: int = 0) -> list:
+        """Get episodes for a subscription with pagination, ordered by pub_date descending."""
+        with get_db_connection() as conn:
+            return conn.execute(
+                "SELECT * FROM episodes WHERE subscription_id = ? ORDER BY pub_date DESC LIMIT ? OFFSET ?",
+                (subscription_id, limit, offset)
+            ).fetchall()
+
+    def count_by_subscription(self, subscription_id: int) -> int:
+        """Count total episodes for a subscription."""
+        with get_db_connection() as conn:
+            result = conn.execute(
+                "SELECT COUNT(*) FROM episodes WHERE subscription_id = ?",
+                (subscription_id,)
+            ).fetchone()
+            return result[0] if result else 0
+
     def get_status(self, id: int) -> Optional[str]:
         with get_db_connection() as conn:
             row = conn.execute("SELECT status FROM episodes WHERE id = ?", (id,)).fetchone()
