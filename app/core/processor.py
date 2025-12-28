@@ -140,7 +140,7 @@ class Processor:
             else:
                 new_title = f"{old_title} (Reprocessed V{v_num})"
         else:
-            v_num = 2
+            v_num = 1
             new_guid = f"{old_guid}_v{v_num}"
             new_title = f"{old_title} (Reprocessed V{v_num})"
 
