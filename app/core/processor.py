@@ -127,18 +127,24 @@ class Processor:
             return False
 
         old_guid = ep.guid
+        old_title = ep.title
         
         # Determine next version
         match = re.search(r'_v(\d+)$', old_guid)
         if match:
-            current_version = int(match.group(1))
-            new_suffix = f"_v{current_version + 1}"
-            new_guid = re.sub(r'_v\d+$', new_suffix, old_guid)
+            v_num = int(match.group(1)) + 1
+            new_guid = re.sub(r'_v\d+$', f"_v{v_num}", old_guid)
+            # Update title version if present, else append
+            if re.search(r' \(Reprocessed V\d+\)$', old_title):
+                new_title = re.sub(r' \(Reprocessed V\d+\)$', f" (Reprocessed V{v_num})", old_title)
+            else:
+                new_title = f"{old_title} (Reprocessed V{v_num})"
         else:
-            new_suffix = "_v2"
-            new_guid = f"{old_guid}{new_suffix}"
+            v_num = 2
+            new_guid = f"{old_guid}_v{v_num}"
+            new_title = f"{old_title} (Reprocessed V{v_num})"
 
-        logger.info(f"Versioning episode {episode_id}: {old_guid} -> {new_guid}")
+        logger.info(f"Versioning episode {episode_id}: '{old_title}' ({old_guid}) -> '{new_title}' ({new_guid})")
 
         # Rename physical directory
         old_episode_slug = f"{old_guid}".replace("/", "_").replace(" ", "_")
@@ -160,13 +166,14 @@ class Processor:
             if not p: return p
             return p.replace(old_dir, new_dir)
 
-        # We need a way to update the GUID and paths in the DB. 
+        # We need a way to update the GUID, Title and paths in the DB. 
         # Using a fresh connection helper from the database module
         from app.infra.database import get_db_connection
         with get_db_connection() as conn:
             conn.execute("""
                 UPDATE episodes SET 
                     guid = ?, 
+                    title = ?,
                     local_filename = ?, 
                     transcript_path = ?, 
                     ad_report_path = ?, 
@@ -174,6 +181,7 @@ class Processor:
                 WHERE id = ?
             """, (
                 new_guid, 
+                new_title,
                 update_path(ep.local_filename),
                 update_path(ep.transcript_path),
                 update_path(ep.ad_report_path),
@@ -182,7 +190,7 @@ class Processor:
             ))
             conn.commit()
 
-        logger.info(f"Metadata updated for episode {episode_id}")
+        logger.info(f"Metadata and Title updated for episode {episode_id}")
         return True
 
     def _extract_text(self, start: float, end: float, segments: list) -> str:
