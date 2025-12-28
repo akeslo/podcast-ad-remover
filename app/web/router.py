@@ -1524,6 +1524,13 @@ async def get_individual_feed(slug: str, request: Request):
             except:
                 pass
     
+    # Set no-cache headers
+    cache_headers = {
+        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0",
+        "Pragma": "no-cache",
+        "Expires": "0"
+    }
+    
     # If auth is enabled and we have credentials, inject token into audio URLs
     if is_auth_enabled and username and password:
         try:
@@ -1539,11 +1546,11 @@ async def get_individual_feed(slug: str, request: Request):
 
             xml_content = re.sub(r'(enclosure\s+url=")(https?://[^"]+)', inject_auth, xml_content)
             
-            return Response(content=xml_content, media_type="application/xml")
+            return Response(content=xml_content, media_type="application/xml", headers=cache_headers)
         except Exception as e:
             logger.error(f"Error injecting auth into feed {slug}: {e}")
     
-    return FileResponse(file_path, media_type="application/xml")
+    return FileResponse(file_path, media_type="application/xml", headers=cache_headers)
 
 @router.get("/feed/unified")
 @router.get("/feed/unified.xml")
@@ -1605,6 +1612,13 @@ async def get_unified_feed(request: Request):
         gen = RSSGenerator()
         gen.generate_unified_feed()
     
+    # Set no-cache headers
+    cache_headers = {
+        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0",
+        "Pragma": "no-cache",
+        "Expires": "0"
+    }
+
     # If auth is enabled, inject credentials into the XML on the fly
     if is_auth_enabled and authorized:
         try:
@@ -1627,9 +1641,9 @@ async def get_unified_feed(request: Request):
                 xml_content = re.sub(r'(enclosure\s+url=")(https?://[^"]+)', inject_auth, xml_content)
 
                 
-            return Response(content=xml_content, media_type="application/xml")
+            return Response(content=xml_content, media_type="application/xml", headers=cache_headers)
         except Exception as e:
             logger.error(f"Error injecting credentials into unified feed: {e}")
             # Fallback to static file if injection fails
     
-    return FileResponse(file_path, media_type="application/xml")
+    return FileResponse(file_path, media_type="application/xml", headers=cache_headers)
