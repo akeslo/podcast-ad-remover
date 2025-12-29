@@ -28,7 +28,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "default-src 'self'; "
             "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "  # Allow inline scripts for dynamic content
             "style-src 'self' 'unsafe-inline'; "  # Allow inline styles
-            "img-src 'self' data: blob:; "  # Allow images from self, data URIs, and blobs
+            "img-src 'self' data: blob: *; "  # Allow images from self, data URIs, blobs, and any external domain
             "media-src 'self' blob:; "  # Allow audio/video from self and blobs
             "font-src 'self' data:; "
             "connect-src 'self'; "
