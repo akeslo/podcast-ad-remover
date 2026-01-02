@@ -870,10 +870,48 @@ async def admin_access(request: Request):
         "pending_requests_count": get_pending_requests_count(),
     })
 
-@router.post("/admin/users/delete/{user_id}")
-async def delete_user(request: Request, user_id: int):
+@router.post("/admin/users/{user_id}/password")
+async def admin_change_user_password(
+    request: Request, 
+    user_id: int, 
+    password: str = Form(...),
+    admin_user: dict = Depends(require_admin)
+):
+    """Admin route to force change a user's password."""
+    # Prevent changing own password via this route (use /change-password instead)
+    if user_id == admin_user.id:
+        return RedirectResponse(
+            url="/admin/access?error=Use+My+Profile+to+change+your+own+password", 
+            status_code=status.HTTP_303_SEE_OTHER
+        )
+
+    # Hash new password
+    new_hash = hash_password(password)
+    
+    from app.infra.database import get_db_connection
+    with get_db_connection() as conn:
+        # Check if user exists
+        user = conn.execute("SELECT username FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not user:
+            return RedirectResponse(
+                url="/admin/access?error=User+not+found", 
+                status_code=status.HTTP_303_SEE_OTHER
+            )
+            
+        conn.execute(
+            "UPDATE users SET password_hash = ? WHERE id = ?", 
+            (new_hash, user_id)
+        )
+        conn.commit()
+    
+    return RedirectResponse(
+        url=f"/admin/access?success=Password+updated+for+{user['username']}", 
+        status_code=status.HTTP_303_SEE_OTHER
+    )
+
+@router.delete("/admin/users/{user_id}")
+async def delete_user(user_id: int, request: Request, user: dict = Depends(require_admin)):
     # Check admin
-    user = require_admin(request)
     if user.id == user_id:
         return RedirectResponse(
             url="/admin/access?error=Cannot delete your own account", 

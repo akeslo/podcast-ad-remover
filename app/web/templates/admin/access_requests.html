@@ -123,6 +123,12 @@
                     <td class="whitespace-nowrap text-text-secondary">{{ active_user.last_login or 'Never' }}</td>
                     <td class="whitespace-nowrap text-right">
                         {% if user.id != active_user.id %}
+                        <!-- Change Password -->
+                        <button onclick="changeUserPassword('{{ active_user.id }}', '{{ active_user.username }}')"
+                            class="text-primary-400 hover:text-primary-300 font-medium mr-3">
+                            Change Password
+                        </button>
+                        
                         <form method="post" action="/admin/users/delete/{{ active_user.id }}"
                             onsubmit="return confirm('Are you sure you want to delete this user?');"
                             style="display:inline">
@@ -270,6 +276,33 @@
                 const input = document.createElement('input');
                 input.type = 'hidden'; input.name = 'username'; input.value = newName;
                 form.appendChild(input); document.body.appendChild(form); form.submit();
+            }
+        }
+    </script>
+    <script nonce="{{ csp_nonce }}">
+        // ... previous scripts ...
+
+        function changeUserPassword(userId, username) {
+            const newPassword = prompt(`Enter new password for ${username}:`);
+            if (newPassword) {
+                // Confirm action
+                if (!confirm(`Are you sure you want to verify change password for ${username}?`)) {
+                    return;
+                }
+                
+                // Create and submit form dynamically
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.action = `/admin/users/${userId}/password`;
+                
+                const input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = 'password';
+                input.value = newPassword;
+                
+                form.appendChild(input);
+                document.body.appendChild(form);
+                form.submit();
             }
         }
     </script>

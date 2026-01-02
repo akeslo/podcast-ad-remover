@@ -130,7 +130,7 @@ app.add_middleware(
     max_age=30 * 24 * 60 * 60,  # 30 days in seconds
     session_cookie="session",
     same_site="lax",  # Prevents CSRF while allowing external navigation
-    https_only=settings.ENVIRONMENT == "production"  # HTTPS-only in production
+    https_only=False  # Allow HTTP for local access
 )
 app.add_middleware(SecurityHeadersMiddleware)
 
