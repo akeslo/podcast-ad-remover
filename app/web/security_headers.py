@@ -20,27 +20,26 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """
     
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        # Generate cryptographic nonce for this request
-        # Used for Content-Security-Policy to allow specific inline scripts
+        # Generate nonce for backward compatibility with templates that reference it
+        # Note: Not used in CSP due to incompatibility with inline event handlers
         import secrets
-        csp_nonce = secrets.token_urlsafe(16)
-        
-        # Store nonce in request state so templates can access it
-        request.state.csp_nonce = csp_nonce
+        request.state.csp_nonce = secrets.token_urlsafe(16)
         
         response = await call_next(request)
         
         # Content Security Policy - Defense against XSS and injection attacks
-        # Uses nonce-based approach to allow specific inline scripts while blocking arbitrary code execution
+        # Note: Using 'unsafe-inline' for scripts to support 70+ inline event handlers (onclick, etc.)
+        # Nonce-based CSP is incompatible with inline event handlers (nonces don't apply to them,
+        # and their presence causes 'unsafe-inline' to be ignored per CSP spec)
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
-            f"script-src 'self' 'nonce-{csp_nonce}' 'unsafe-inline' https://cdnjs.cloudflare.com https://static.cloudflareinsights.com; "  # unsafe-inline needed for event handlers (nonces don't apply to them)
+            "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://static.cloudflareinsights.com; "
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-            "style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com; "  # Explicit style-src-elem
+            "style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com; "
             "img-src 'self' data: blob: https:; "
             "media-src 'self' blob:; "
             "font-src 'self' data: https://fonts.gstatic.com; "
-            "connect-src 'self' https://cloudflareinsights.com; "  # Allow Cloudflare beacon
+            "connect-src 'self' https://cloudflareinsights.com; "
             "frame-ancestors 'none'; "
             "base-uri 'self'; "
             "form-action 'self'"
