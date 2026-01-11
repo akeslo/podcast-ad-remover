@@ -704,11 +704,13 @@ Example: [{"start": 0.0, "end": 10.0, "label": "Ad", "reason": "Sponsor read for
 async def admin_queue(request: Request):
     user = get_current_user(request)
     queue = ep_repo.get_queue()
+    recently_processed = ep_repo.get_recently_processed(days=3)
     return templates.TemplateResponse("admin/queue.html", {
         "request": request,
         "csp_nonce": get_csp_nonce(request),
         "user": user,
         "queue": queue,
+        "recently_processed": recently_processed,
         "pending_requests_count": get_pending_requests_count(),
         "active_tab": "queue"
     })

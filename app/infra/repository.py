@@ -116,6 +116,21 @@ class EpisodeRepository:
             """).fetchall()
             return [dict(row) for row in rows]
 
+    def get_recently_processed(self, days: int = 3) -> List[dict]:
+        """Get episodes completed or failed in the last N days for audit trail."""
+        with get_db_connection() as conn:
+            rows = conn.execute("""
+                SELECT e.*, s.title as podcast_title 
+                FROM episodes e
+                JOIN subscriptions s ON e.subscription_id = s.id
+                WHERE e.status IN ('completed', 'failed', 'ignored')
+                AND e.processed_at IS NOT NULL
+                AND e.processed_at >= datetime('now', ?)
+                ORDER BY e.processed_at DESC
+                LIMIT 50
+            """, (f'-{days} days',)).fetchall()
+            return [dict(row) for row in rows]
+
     def get_by_id(self, id: int) -> Optional[Episode]:
         with get_db_connection() as conn:
             row = conn.execute("SELECT * FROM episodes WHERE id = ?", (id,)).fetchone()
