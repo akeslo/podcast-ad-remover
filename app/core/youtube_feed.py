@@ -51,6 +51,12 @@ class YouTubeFeedManager:
     @staticmethod
     def parse_videos(channel_url: str, limit: int = 5) -> List[Dict]:
         """Parse recent videos from YouTube channel."""
+        # Ensure we're getting actual videos, not playlists
+        # YouTube channels return sub-playlists by default, we need /videos
+        if not channel_url.endswith('/videos'):
+            # Add /videos to get actual uploaded videos instead of playlist entries
+            channel_url = channel_url.rstrip('/') + '/videos'
+
         ydl_opts = {
             'quiet': True,
             'extract_flat': 'in_playlist',
@@ -69,6 +75,14 @@ class YouTubeFeedManager:
                     if not entry:
                         continue
 
+                    video_id = entry.get('id', '')
+
+                    # Skip invalid entries (playlists, channel IDs, etc.)
+                    # Valid video IDs are 11 characters and don't start with UC
+                    if not video_id or len(video_id) != 11 or video_id.startswith('UC'):
+                        logger.warning(f"Skipping invalid video ID: {video_id} (likely a playlist or channel ID)")
+                        continue
+
                     # Parse upload date
                     pub_date = None
                     if entry.get('upload_date'):
@@ -78,14 +92,14 @@ class YouTubeFeedManager:
                             pass
 
                     video_data = {
-                        'guid': entry['id'],
+                        'guid': video_id,
                         'title': entry.get('title', 'Unknown Video'),
                         'pub_date': pub_date,
-                        'original_url': f"https://www.youtube.com/watch?v={entry['id']}",
+                        'original_url': f"https://www.youtube.com/watch?v={video_id}",
                         'duration': int(entry.get('duration', 0)),
                         'description': entry.get('description', ''),
                         'file_size': 0,
-                        'video_id': entry['id'],
+                        'video_id': video_id,
                         'thumbnail_url': entry.get('thumbnail'),
                     }
                     videos.append(video_data)
