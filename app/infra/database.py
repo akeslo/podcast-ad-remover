@@ -48,21 +48,6 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
-    try:
-        cursor.execute("ALTER TABLE episodes ADD COLUMN video_id TEXT")
-    except sqlite3.OperationalError:
-        pass
-
-    try:
-        cursor.execute("ALTER TABLE episodes ADD COLUMN is_video BOOLEAN DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass
-
-    try:
-        cursor.execute("ALTER TABLE episodes ADD COLUMN thumbnail_url TEXT")
-    except sqlite3.OperationalError:
-        pass
-
     # SponsorBlock settings
     try:
         cursor.execute("ALTER TABLE app_settings ADD COLUMN enable_sponsorblock INTEGER DEFAULT 1")
@@ -275,7 +260,12 @@ Transcript Context: {transcript_context}""",))
         "ALTER TABLE app_settings ADD COLUMN default_manual_retention_days INTEGER DEFAULT 14",
         "ALTER TABLE app_settings ADD COLUMN default_custom_instructions TEXT",
         "ALTER TABLE episodes ADD COLUMN listen_count INTEGER DEFAULT 0",
-        "ALTER TABLE app_settings ADD COLUMN gemini_api_keys TEXT"
+        "ALTER TABLE app_settings ADD COLUMN gemini_api_keys TEXT",
+
+        # YouTube support columns
+        "ALTER TABLE episodes ADD COLUMN video_id TEXT",
+        "ALTER TABLE episodes ADD COLUMN is_video BOOLEAN DEFAULT 0",
+        "ALTER TABLE episodes ADD COLUMN thumbnail_url TEXT"
     ]
     
     for sql in migrations:
