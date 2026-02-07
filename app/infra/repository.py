@@ -5,13 +5,13 @@ from app.infra.database import get_db_connection
 from app.core.models import SubscriptionCreate, Subscription, Episode
 
 class SubscriptionRepository:
-    def create(self, sub: SubscriptionCreate, title: str, slug: str, image_url: str = None, description: str = None, retention_limit: int = 1) -> Subscription:
+    def create(self, sub: SubscriptionCreate, title: str, slug: str, image_url: str = None, description: str = None, retention_limit: int = 1, source_type: str = "rss") -> Subscription:
         with get_db_connection() as conn:
             cursor = conn.cursor()
             try:
                 cursor.execute(
-                    "INSERT INTO subscriptions (feed_url, title, slug, image_url, description, retention_limit) VALUES (?, ?, ?, ?, ?, ?)",
-                    (sub.feed_url, title, slug, image_url, description, retention_limit)
+                    "INSERT INTO subscriptions (feed_url, title, slug, image_url, description, retention_limit, source_type) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (sub.feed_url, title, slug, image_url, description, retention_limit, source_type)
                 )
                 sub_id = cursor.lastrowid
                 conn.commit()
@@ -77,8 +77,8 @@ class EpisodeRepository:
         with get_db_connection() as conn:
             try:
                 conn.execute("""
-                    INSERT INTO episodes (subscription_id, guid, title, pub_date, original_url, duration, description, status, file_size)
-                    VALUES (:subscription_id, :guid, :title, :pub_date, :original_url, :duration, :description, :status, :file_size)
+                    INSERT INTO episodes (subscription_id, guid, title, pub_date, original_url, duration, description, status, file_size, video_id, is_video, thumbnail_url)
+                    VALUES (:subscription_id, :guid, :title, :pub_date, :original_url, :duration, :description, :status, :file_size, :video_id, :is_video, :thumbnail_url)
                 """, episode)
                 conn.commit()
                 return True

@@ -14,3 +14,4 @@ aiofiles>=23.2.0
 piper-tts==1.2.0
 bcrypt
 itsdangerous
+yt-dlp>=2024.0.0

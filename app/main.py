@@ -105,6 +105,7 @@ async def lifespan(app: FastAPI):
 
 from app.api import subscriptions
 from app.api import audio_routes
+from app.api import video_routes
 from app.web import router as web_router
 from app.web.middleware import feed_auth_middleware
 from app.web.auth import auth_middleware
@@ -140,6 +141,7 @@ configure_error_handlers(app)
 
 app.include_router(subscriptions.router, prefix="/api")
 app.include_router(audio_routes.router)  # Dynamic audio serving with listen tracking
+app.include_router(video_routes.router)  # Dynamic video serving with view tracking
 app.include_router(web_router.router)
 
 # Mount static files
