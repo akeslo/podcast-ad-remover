@@ -31,14 +31,18 @@ class YouTubeFeedManager:
                     raise ValueError("Could not extract channel information")
 
                 title = info.get('title') or info.get('channel') or 'Unknown Channel'
-                slug = slugify(title)
+                # Prefix slug with 'yt-' to avoid conflicts with podcast names
+                slug = f"yt-{slugify(title)}"
                 description = info.get('description', '')
 
                 # Get thumbnail (prefer channel thumbnail)
                 thumbnails = info.get('thumbnails', [])
                 image_url = thumbnails[-1]['url'] if thumbnails else None
 
-                return title, slug, image_url, description
+                # Prefix title with 'YT: ' for visual distinction
+                display_title = f"YT: {title}"
+
+                return display_title, slug, image_url, description
 
         except Exception as e:
             logger.error(f"Error parsing YouTube channel: {e}")
