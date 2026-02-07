@@ -76,10 +76,26 @@ class EpisodeRepository:
         """Returns True if created, False if already exists."""
         with get_db_connection() as conn:
             try:
+                # Ensure video fields have defaults for RSS episodes
+                episode_data = {
+                    'subscription_id': episode['subscription_id'],
+                    'guid': episode['guid'],
+                    'title': episode['title'],
+                    'pub_date': episode.get('pub_date'),
+                    'original_url': episode['original_url'],
+                    'duration': episode.get('duration', 0),
+                    'description': episode.get('description', ''),
+                    'status': episode.get('status', 'pending'),
+                    'file_size': episode.get('file_size', 0),
+                    'video_id': episode.get('video_id'),
+                    'is_video': episode.get('is_video', False),
+                    'thumbnail_url': episode.get('thumbnail_url')
+                }
+
                 conn.execute("""
                     INSERT INTO episodes (subscription_id, guid, title, pub_date, original_url, duration, description, status, file_size, video_id, is_video, thumbnail_url)
                     VALUES (:subscription_id, :guid, :title, :pub_date, :original_url, :duration, :description, :status, :file_size, :video_id, :is_video, :thumbnail_url)
-                """, episode)
+                """, episode_data)
                 conn.commit()
                 return True
             except sqlite3.IntegrityError:
