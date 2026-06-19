@@ -285,45 +285,102 @@ class GeminiProvider(LLMProvider):
         logger.error("Gemini: Rate limit hit and no more keys available.")
         return False
 
+    # Retry tuning for transient server errors (503/500 etc.)
+    TRANSIENT_MAX_RETRIES = 2          # extra attempts on the SAME model after first failure
+    TRANSIENT_BACKOFF_BASE = 1.5       # seconds; sleep = base * (2 ** attempt)
+
+    def _generate_one(self, model_name: str, prompt: str) -> str:
+        """
+        Attempt a single model, retrying in-place on transient 5xx server errors
+        (high-demand 503 / 500 / overloaded) with exponential backoff before giving up.
+        Raises the last exception if all attempts fail.
+        """
+        import time
+
+        transient_patterns = [
+            '503', '500',
+            'unavailable',
+            'overloaded',
+            'high demand',
+            'try again later',
+            'internal error',
+            'internal server error',
+            'deadline exceeded',
+        ]
+
+        last_exc = None
+        # Total attempts = 1 initial + TRANSIENT_MAX_RETRIES
+        for attempt in range(self.TRANSIENT_MAX_RETRIES + 1):
+            try:
+                logger.info(f"Gemini: Trying model {model_name} with key #{self.current_key_idx + 1} (attempt {attempt + 1})...")
+                response = self.client.models.generate_content(
+                    model=model_name,
+                    contents=prompt
+                )
+                return response.text if response.text else ""
+            except Exception as e:
+                last_exc = e
+                error_str = str(e).lower()
+                is_transient = any(p in error_str for p in transient_patterns)
+
+                # Non-transient errors (rate limits, auth, bad request) fail fast — caller handles fallthrough.
+                if not is_transient or attempt >= self.TRANSIENT_MAX_RETRIES:
+                    raise
+
+                sleep_s = self.TRANSIENT_BACKOFF_BASE * (2 ** attempt)
+                logger.warning(
+                    f"Gemini model {model_name} transient error (attempt {attempt + 1}): {e}. "
+                    f"Retrying same model in {sleep_s:.1f}s..."
+                )
+                time.sleep(sleep_s)
+
+        # Defensive: loop always returns or raises, but guard anyway.
+        raise last_exc
+
     def generate(self, prompt: str) -> str:
         """
         Generate content using the model cascade.
-        Failover logic: Try all models in cascade with current key, then rotate to next key and retry.
+        Failover logic: Try all models in cascade (each with in-place transient retry),
+        then rotate to next key and retry.
         """
         last_error = None
-        
+
         # Outer loop: iterate through available keys
         while True:
             all_rate_limited = True  # Track if all models hit rate limits on this key
-            
+
             for model_name in self.cascade:
                 try:
-                    logger.info(f"Gemini: Trying model {model_name} with key #{self.current_key_idx + 1}...")
-                    response = self.client.models.generate_content(
-                        model=model_name,
-                        contents=prompt
-                    )
-                    return response.text if response.text else ""
+                    return self._generate_one(model_name, prompt)
                 except Exception as e:
                     error_str = str(e).lower()
                     last_error = e
-                    
+
                     # Check for rate limit indicators
                     rate_limit_patterns = [
-                        'resource_exhausted', 
-                        'quota exceeded', 
-                        'rate limit', 
-                        '429', 
+                        'resource_exhausted',
+                        'quota exceeded',
+                        'rate limit',
+                        '429',
                         'too many requests',
                         'resourceexhausted'
                     ]
                     is_rate_limit = any(pattern in error_str for pattern in rate_limit_patterns)
-                    
+
+                    # Transient 5xx already exhausted its in-place retries in _generate_one.
+                    # Treat it as "skip to next model" WITHOUT poisoning key rotation
+                    # (a 503 is a server-side spike, not a key/quota problem).
+                    transient_patterns = ['503', '500', 'unavailable', 'overloaded', 'high demand', 'internal error', 'deadline exceeded']
+                    is_transient = any(p in error_str for p in transient_patterns)
+
                     if is_rate_limit:
                         logger.warning(f"Gemini model {model_name} rate limited on key #{self.current_key_idx + 1}: {e}")
                         # Continue to try next model in cascade with same key
+                    elif is_transient:
+                        logger.warning(f"Gemini model {model_name} unavailable after retries: {e}. Falling through to next model.")
+                        # Do NOT set all_rate_limited=False — keep key rotation available as a last resort.
                     else:
-                        # Non-rate-limit error - this model just failed, try next model
+                        # Non-rate-limit, non-transient error (auth, bad request) - real failure, try next model
                         logger.warning(f"Gemini model {model_name} failed: {e}")
                         all_rate_limited = False
             
