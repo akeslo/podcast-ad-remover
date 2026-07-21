@@ -12,8 +12,15 @@ WORKDIR /app
 RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 
 # Install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Use lockfile if available (reproducible builds), otherwise fall back to requirements.txt
+COPY requirements*.txt requirements*.lock* ./
+RUN if [ -f requirements.lock ]; then \
+    echo "Installing from requirements.lock (pinned versions)"; \
+    pip install --no-cache-dir -r requirements.lock; \
+  else \
+    echo "Installing from requirements.txt (floating versions)"; \
+    pip install --no-cache-dir -r requirements.txt; \
+  fi
 
 # Copy application code
 COPY . .

@@ -86,13 +86,18 @@ async def lifespan(app: FastAPI):
     # Use spawn start method for consistency across platforms (especially Mac)
     try:
         multiprocessing.set_start_method('spawn', force=True)
-    except RuntimeError:
-        pass
-        
+    except RuntimeError as e:
+        logger.warning(f"Could not set spawn start method (may already be set): {e}")
+
     p = multiprocessing.Process(target=start_processor_process, name="PodcastProcessor", daemon=True)
-    p.start()
-    app.state.processor_process = p
-    logger.info(f"Background processor started in separate process (PID: {p.pid})")
+    try:
+        p.start()
+        app.state.processor_process = p
+        logger.info(f"Background processor started in separate process (PID: {p.pid})")
+    except Exception as e:
+        logger.error(f"Failed to start background processor: {e}", exc_info=True)
+        # Continue startup without processor; this allows the app to run even if processor fails
+        app.state.processor_process = None
     
     yield
     

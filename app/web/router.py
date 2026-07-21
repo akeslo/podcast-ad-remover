@@ -80,8 +80,6 @@ def simple_markdown(text):
             
     if in_list:
         flush_list()
-        
-    return '\n'.join(result)
 
     return '\n'.join(result)
 
