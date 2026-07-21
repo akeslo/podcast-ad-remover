@@ -18,7 +18,9 @@ Screenshot: Ad Report
 
 ## Features
 
--   **Automatic Ad Detection**: Uses state-of-the-art LLMs (Google Gemini, OpenAI GPT-4, Anthropic Claude, or OpenRouter) to intelligently identify ads, sponsor reads, and promotional segments.
+-   **Automatic Ad Detection**: Uses LLMs to intelligently identify ads, sponsor reads, and promotional segments.
+    -   **Recommended: Google Gemini** — free tier, automatic multi-key failover, and transient error retry built in (see `app/core/ai_services.py`'s `GeminiProvider` for the failover/retry architecture).
+    -   **Also supported (less tested)**: OpenAI GPT-4, Anthropic Claude, OpenRouter (all require an API key; these providers currently have simpler flat model-list fallback with no multi-key rotation or transient-error retry).
 -   **Audio Processing**: Uses **Whisper** for accurate transcription and **FFmpeg** for precise audio cutting.
 -   **Seamless Playback**: Generates custom RSS feeds for every subscription. Add them to your favorite podcast player (Apple Podcasts, Pocket Casts, etc.) to listen ad-free.
 -   **Smart Enhancements**: 
