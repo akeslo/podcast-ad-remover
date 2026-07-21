@@ -143,6 +143,18 @@ class EpisodeRepository:
             rows = conn.execute("SELECT * FROM episodes WHERE subscription_id = ?", (subscription_id,)).fetchall()
             return [Episode.model_validate(dict(row)) for row in rows]
 
+    def get_processed_by_subscription(self, subscription_id: int) -> List[dict]:
+        """Get completed episodes for a subscription, ordered by publication date (descending).
+
+        Returns raw dictionary rows for RSS feed generation.
+        """
+        with get_db_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM episodes WHERE subscription_id = ? AND status = 'completed' ORDER BY pub_date DESC",
+                (subscription_id,)
+            ).fetchall()
+            return [dict(row) for row in rows]
+
     def get_by_subscription_paginated(self, subscription_id: int, limit: int = 20, offset: int = 0, search: str = None) -> list:
         """Get episodes for a subscription with pagination, ordered by pub_date descending.
         Optionally filter by search term (matches title)."""

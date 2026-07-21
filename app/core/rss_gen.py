@@ -15,39 +15,43 @@ class RSSGenerator:
         self.sub_repo = SubscriptionRepository()
         self.ep_repo = EpisodeRepository() # We might need a get_by_subscription method
 
+    def _get_base_url(self) -> str:
+        """Resolve the base URL for RSS feed generation.
+
+        Returns the configured external URL if set, otherwise resolves to LAN IP
+        if running on localhost, falling back to BASE_URL.
+        """
+        from app.core.utils import get_global_settings
+        from app.core.utils import get_lan_ip
+        import re
+
+        global_settings = get_global_settings()
+        external_url = global_settings.get("app_external_url")
+
+        # Use external URL if configured
+        if external_url and external_url.strip():
+            return external_url.rstrip("/")
+
+        # Otherwise resolve localhost to LAN IP if possible
+        base_url = settings.BASE_URL.rstrip("/")
+        if "localhost" in base_url or "127.0.0.1" in base_url:
+            lan_ip = get_lan_ip()
+            if lan_ip and lan_ip != "localhost":
+                # Use \g<1> to avoid ambiguity when lan_ip starts with digits (e.g. "192" would be interpreted as \1192)
+                base_url = re.sub(r"(https?://)(localhost|127\.0\.0\.1)", rf"\g<1>{lan_ip}", base_url)
+
+        return base_url
+
     def generate_feed(self, subscription_id: int):
         sub = self.sub_repo.get_by_id(subscription_id)
         if not sub:
             return
-            
+
         # Get base URL from settings
-        from app.core.utils import get_global_settings
-        from app.core.utils import get_lan_ip
-        global_settings = get_global_settings()
-        external_url = global_settings.get("app_external_url")
-        
-        # Use placeholder if no external URL is set
-        if external_url and external_url.strip():
-            base_url = external_url.rstrip("/")
-        else:
-            # Check if we're on localhost and can use LAN IP
-            base_url = settings.BASE_URL.rstrip("/")
-            if "localhost" in base_url or "127.0.0.1" in base_url:
-                lan_ip = get_lan_ip()
-                if lan_ip and lan_ip != "localhost":
-                    import re
-                    # Use \g<1> to avoid ambiguity when lan_ip starts with digits (e.g. "192" would be interpreted as \1192)
-                    base_url = re.sub(r"(https?://)(localhost|127\.0\.0\.1)", rf"\g<1>{lan_ip}", base_url)
+        base_url = self._get_base_url()
 
         # Get processed episodes
-        # TODO: Add get_processed_by_subscription to EpisodeRepository
-        # For now, let's assume we have a list of dicts
-        from app.infra.database import get_db_connection
-        with get_db_connection() as conn:
-            episodes = conn.execute(
-                "SELECT * FROM episodes WHERE subscription_id = ? AND status = 'completed' ORDER BY pub_date DESC", 
-                (subscription_id,)
-            ).fetchall()
+        episodes = self.ep_repo.get_processed_by_subscription(subscription_id)
             
         rss = Element('rss', version='2.0', **{'xmlns:itunes': 'http://www.itunes.com/dtds/podcast-1.0.dtd'})
         channel = SubElement(rss, 'channel')
@@ -137,25 +141,9 @@ class RSSGenerator:
 
     def generate_unified_feed(self):
         """Generate a single RSS feed containing all episodes from all subscriptions."""
-        
-        # Get base URL from settings (reuse logic from generate_feed)
-        from app.core.utils import get_global_settings
-        from app.core.utils import get_lan_ip
-        global_settings = get_global_settings()
-        external_url = global_settings.get("app_external_url")
-        
-        #  Use placeholder if no external URL is set
-        if external_url and external_url.strip():
-            base_url = external_url.rstrip("/")
-        else:
-            # Check if we're on localhost and can use LAN IP
-            base_url = settings.BASE_URL.rstrip("/")
-            if "localhost" in base_url or "127.0.0.1" in base_url:
-                lan_ip = get_lan_ip()
-                if lan_ip and lan_ip != "localhost":
-                    import re
-                    # Use \g<1> to avoid ambiguity when lan_ip starts with digits (e.g. "192" would be interpreted as \1192)
-                    base_url = re.sub(r"(https?://)(localhost|127\.0\.0\.1)", rf"\g<1>{lan_ip}", base_url)
+
+        # Get base URL from settings
+        base_url = self._get_base_url()
         
 
 
