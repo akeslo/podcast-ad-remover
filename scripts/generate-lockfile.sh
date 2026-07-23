@@ -12,11 +12,11 @@ cd "$PROJECT_ROOT"
 
 # Install pip-tools if not already installed
 echo "Ensuring pip-tools is available..."
-pip install --quiet pip-tools
+python3 -m pip install --quiet --user --break-system-packages pip-tools
 
 # Generate main requirements.lock from requirements.txt
 echo "Generating requirements.lock from requirements.txt..."
-pip-compile \
+python3 -m piptools compile \
   --resolver=backtracking \
   --strip-extras \
   --output-file=requirements.lock \
@@ -24,7 +24,7 @@ pip-compile \
 
 # Generate dev requirements.lock from requirements-dev.txt
 echo "Generating requirements-dev.lock from requirements-dev.txt..."
-pip-compile \
+python3 -m piptools compile \
   --resolver=backtracking \
   --strip-extras \
   --output-file=requirements-dev.lock \
