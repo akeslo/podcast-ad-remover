@@ -31,6 +31,11 @@ Screenshot: Ad Report
     -   Processing queue with pause/resume/cancel/retry capabilities.
     -   Manual "Reprocess" option to try different settings.
     -   Full admin dashboard for managing subscriptions and viewing logs.
+    -   Multi-user access-request workflow — new users request access, an admin approves
+        or denies from the dashboard.
+    -   Transcript viewer for reviewing what the AI detected in a given episode.
+    -   Apple Podcasts subscribe helper page for one-tap adding a feed on iOS.
+    -   Admin password/username management.
 
 ## Quick Start
 
