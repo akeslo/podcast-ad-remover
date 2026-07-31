@@ -874,7 +874,7 @@ async def admin_access(request: Request):
         "user": user,
         "active_tab": "access",
         "settings": settings,
-        "app_base_url": get_app_base_url(request, settings),
+        "app_base_url": get_app_base_url(settings, request),
         "pending_requests": [dict(row) for row in pending_requests],
         "active_users": [dict(row) for row in active_users],
         "login_history": [dict(row) for row in login_history],

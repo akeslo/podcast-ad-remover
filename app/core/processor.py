@@ -4,6 +4,7 @@ import logging
 import httpx
 import aiofiles
 import json
+import html as html_escaper
 from datetime import datetime
 from app.core.config import settings
 from app.core.models import Episode
@@ -513,17 +514,27 @@ class Processor:
             # Generate Human-Readable Report (HTML)
             human_report_path = os.path.join(episode_dir, "report.html")
             
+            # Everything interpolated below is attacker-influenced: segment
+            # label/reason/text come back from the LLM, and the episode title
+            # comes from a third-party RSS feed. The report is served
+            # same-origin under a CSP that allows inline scripts, so raw
+            # interpolation is stored XSS against the admin session.
+            def esc(value, default=""):
+                if value is None:
+                    value = default
+                return html_escaper.escape(str(value), quote=True)
+
             rows_html = ""
             for s in ad_segments:
                 rows_html += f"""
                 <div class="segment">
                     <div class="flex justify-between">
-                        <strong>{s['start']}s - {s['end']}s</strong>
-                        <span class="badge">{s.get('label', 'Ad')}</span>
+                        <strong>{esc(s.get('start'))}s - {esc(s.get('end'))}s</strong>
+                        <span class="badge">{esc(s.get('label'), 'Ad')}</span>
                     </div>
-                    <p class="reason">{s.get('reason', 'No reason provided')}</p>
+                    <p class="reason">{esc(s.get('reason'), 'No reason provided')}</p>
                     <div class="transcript-text">
-                        "{s.get('text', 'No text extracted')}"
+                        "{esc(s.get('text'), 'No text extracted')}"
                     </div>
                 </div>
                 """
@@ -531,7 +542,7 @@ class Processor:
             html_content = f"""
             <html>
             <head>
-                <title>Ad Report: {ep.title}</title>
+                <title>Ad Report: {esc(ep.title)}</title>
                 <link rel="preconnect" href="https://fonts.googleapis.com">
                 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
                 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
@@ -610,8 +621,8 @@ class Processor:
                     </a>
                 </div>
                 <h1>Ad Report</h1>
-                <h2>{ep.title}</h2>
-                <p class="meta">GUID: {ep.guid}</p>
+                <h2>{esc(ep.title)}</h2>
+                <p class="meta">GUID: {esc(ep.guid)}</p>
                 
                 <h3>Detected Segments</h3>
                 <p class="total">Total Segments: {len(ad_segments)}</p>

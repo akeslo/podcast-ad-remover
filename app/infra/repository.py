@@ -249,9 +249,31 @@ class EpisodeRepository:
 
     def update_status(self, id: int, status: str, error: str = None, filename: str = None, file_size: int = None):
         with get_db_connection() as conn:
+            # Only write local_filename/file_size when the caller actually supplied
+            # them. Writing them unconditionally wiped the path to an already
+            # produced MP3 on every plain status transition (e.g. "processing",
+            # "pending", "failed"), which pushed the RSS enclosure onto the
+            # guess-the-path fallback and could 404.
+            updates = ["status = ?", "error_message = ?"]
+            params = [status, error]
+
+            if filename is not None:
+                updates.append("local_filename = ?")
+                params.append(filename)
+
+            if file_size is not None:
+                updates.append("file_size = ?")
+                params.append(file_size)
+
+            updates.append("processed_at = ?")
+            params.append(datetime.now() if status == 'completed' else None)
+
+            updates.append("next_retry_at = NULL")
+
+            params.append(id)
             conn.execute(
-                "UPDATE episodes SET status = ?, error_message = ?, local_filename = ?, file_size = ?, processed_at = ?, next_retry_at = NULL WHERE id = ?",
-                (status, error, filename, file_size, datetime.now() if status == 'completed' else None, id)
+                f"UPDATE episodes SET {', '.join(updates)} WHERE id = ?",
+                tuple(params)
             )
             conn.commit()
 
