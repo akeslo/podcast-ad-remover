@@ -30,6 +30,11 @@ def simple_markdown(text):
     if not text:
         return ""
     import re
+    import html
+    # Escape first: this output is rendered with |safe, and the text is
+    # LLM-generated from third-party transcripts. Only the tags this
+    # function emits itself may reach the page as markup.
+    text = html.escape(text)
     # Handle both Unix and Windows line endings
     lines = text.replace('\r\n', '\n').split('\n')
     result = []

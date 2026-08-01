@@ -112,7 +112,7 @@ class RateLimiter:
             lockout_until = current_time + self.lockout_seconds
             self.locked_ips[ip] = lockout_until
             logger.warning(
-                f"IP {ip} locked out for {self.lockout_minutes} minutes "
+                f"IP {ip} locked out for {self.lockout_seconds // 60} minutes "
                 f"after {total_attempts} failed login attempts"
             )
             return True  # Locked

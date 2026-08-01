@@ -286,6 +286,12 @@ class Processor:
             sub = self.sub_repo.get_by_id(ep.subscription_id)
             if not sub:
                 logger.error(f"Subscription {ep.subscription_id} not found for episode {ep.id}")
+                # Leave no episode stuck in 'processing' — count_processing()
+                # would burn a concurrency slot until the next restart.
+                self.ep_repo.update_status(
+                    ep.id, "failed",
+                    error=f"Subscription {ep.subscription_id} not found"
+                )
                 return
 
             # Actually run the processing

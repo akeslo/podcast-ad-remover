@@ -266,7 +266,10 @@ class EpisodeRepository:
                 params.append(file_size)
 
             updates.append("processed_at = ?")
-            params.append(datetime.now() if status == 'completed' else None)
+            # 'failed' is terminal too — get_recently_processed() filters on
+            # processed_at IS NOT NULL, so leaving it NULL hid every failure
+            # from the audit trail that exists to surface them.
+            params.append(datetime.now() if status in ('completed', 'failed') else None)
 
             updates.append("next_retry_at = NULL")
 

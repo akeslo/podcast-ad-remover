@@ -713,8 +713,11 @@ class AdDetector:
             provider = self._get_provider()
             return provider.generate(prompt).strip()
         except Exception as e:
+            # Do not return a canned summary here: the caller persists whatever
+            # this returns, which would silently overwrite the real episode
+            # description in the published feed on any provider outage.
             logger.error(f"Summary generation failed: {e}")
-            return f"Welcome to {podcast_name}. Today's episode is {episode_title}."
+            raise
 
     # --- Helpers ---
     def _build_ad_prompt(self, options, transcript_text):
