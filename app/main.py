@@ -103,10 +103,13 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     logger.info("Shutting down...")
-    if hasattr(app.state, "processor_process"):
+    # The attribute is set to None when the worker failed to start, so a bare
+    # hasattr() check raised AttributeError on exactly the already-degraded boxes.
+    processor_process = getattr(app.state, "processor_process", None)
+    if processor_process is not None:
         logger.info("Stopping background processor...")
-        app.state.processor_process.terminate()
-        app.state.processor_process.join(timeout=5)
+        processor_process.terminate()
+        processor_process.join(timeout=5)
 
 from app.api import subscriptions
 from app.api import audio_routes

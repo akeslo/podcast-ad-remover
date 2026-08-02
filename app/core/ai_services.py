@@ -523,7 +523,13 @@ class AdDetector:
 
     def create_provider(self, provider_type: str, api_key: str = None, model: str = None, openrouter_key: str = None) -> LLMProvider:
         """Factory to create a provider instance."""
-        
+
+        # Whether the caller handed us a key explicitly (e.g. the admin "Test
+        # connection" form). If so it must be the key actually exercised — the
+        # Gemini branch below otherwise rebuilds the list from DB + env and
+        # silently tests the previously saved key instead.
+        explicit_api_key = api_key if api_key else None
+
         # Resolve keys (DB Overrides Env)
         if not api_key:
             db_key = None
@@ -589,9 +595,15 @@ class AdDetector:
             return OpenAIProvider(api_key, models_list, base_url="https://openrouter.ai/api/v1")
             
         else: # Gemini
+            # An explicitly passed key is the one under test — don't widen it to
+            # the saved DB/env keys, or "Test connection" reports success for a
+            # key that was never used.
+            if explicit_api_key:
+                return GeminiProvider([explicit_api_key], models_list)
+
             # For Gemini, build the full keys list from all sources
             api_keys = []
-            
+
             # 1. DB keys (gemini_api_keys JSON array)
             db_keys_json = self.settings.get('gemini_api_keys')
             if db_keys_json:

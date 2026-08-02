@@ -299,6 +299,13 @@ class Processor:
             
         except Exception as e:
             logger.error(f"Fatal error in episode task {ep_id}: {e}")
+            # Anything raised before _process_episode_inner's own handler (model
+            # validation, repo errors) would otherwise leave the row at
+            # 'processing' forever, burning a concurrency slot until a restart.
+            try:
+                self.ep_repo.update_status(ep_id, "failed", error=str(e))
+            except Exception as status_err:
+                logger.error(f"Could not mark episode {ep_id} failed: {status_err}")
         finally:
             # Ensure ID is removed from active set
             Processor._active_task_ids.discard(ep_id)
@@ -493,7 +500,10 @@ class Processor:
             for segment in sorted(ad_segments, key=lambda x: x['start']):
                 if merged_segments and segment['start'] - merged_segments[-1]['end'] < 10:
                     # Merge with previous segment
-                    merged_segments[-1]['end'] = segment['end']
+                    # Never shrink the window: a segment fully contained inside
+                    # the previous one would otherwise pull `end` backwards and
+                    # leave real ad audio uncut.
+                    merged_segments[-1]['end'] = max(merged_segments[-1]['end'], segment['end'])
                     # Keep the label/reason of the first segment or combine? Let's keep first for simplicity
                     logger.info(f"Merged segment {segment['start']}-{segment['end']} into {merged_segments[-1]['start']}-{merged_segments[-1]['end']}")
                 else:

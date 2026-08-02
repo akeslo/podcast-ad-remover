@@ -10,6 +10,26 @@ from app.infra.repository import SubscriptionRepository, EpisodeRepository
 
 logger = logging.getLogger(__name__)
 
+
+def _cdata(text: str) -> str:
+    """
+    Wrap text in a CDATA section that survives the document-wide un-escaping
+    done after tostring().
+
+    Descriptions are written as the literal string "<![CDATA[...]]>" and the
+    surrounding markers are un-escaped again at the end of generation. Without
+    this, a description containing the CDATA terminator "]]>" (or the literal
+    opener "<![CDATA[") closed or reopened the section early and produced
+    malformed XML — which takes the *whole* feed down in every podcast client,
+    not just the one episode.
+    """
+    safe = (text or "").replace("<![CDATA[", "")
+    # Standard trick: close the section, emit "]]>" as its own escaped text,
+    # then reopen. Only the outer markers are un-escaped later, so the inner
+    # "]]&gt;" would survive — split it instead so no bare terminator exists.
+    safe = safe.replace("]]>", "]] >")
+    return f"<![CDATA[{safe}]]>"
+
 class RSSGenerator:
     def __init__(self):
         self.sub_repo = SubscriptionRepository()
@@ -122,7 +142,7 @@ class RSSGenerator:
             # We unescape first in case the source was already escaped in the DB
             clean_description = html.unescape(description)
             desc_element = SubElement(item, 'description')
-            desc_element.text = f"<![CDATA[{clean_description}]]>"
+            desc_element.text = _cdata(clean_description)
 
 
 
@@ -218,7 +238,7 @@ class RSSGenerator:
             # Use CDATA for HTML support and to prevent double-escaping
             clean_description = html.unescape(description)
             desc_element = SubElement(item, 'description')
-            desc_element.text = f"<![CDATA[{clean_description}]]>"
+            desc_element.text = _cdata(clean_description)
 
         # Save to file - use basic tostring to avoid minidom.toprettyxml() URL corruption bug
         # minidom.toprettyxml() has a bug that corrupts URLs like "http://192" into "O2"
