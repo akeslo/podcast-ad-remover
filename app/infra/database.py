@@ -282,8 +282,39 @@ Transcript Context: {transcript_context}""",))
             (generate_feed_token(), user_id),
         )
 
+    # A feed token is a bearer credential; two users must never share one, and
+    # a duplicate would resolve to the wrong account. Partial so the many rows
+    # that legitimately hold NULL/'' (users predating the backfill, mid-upgrade)
+    # do not collide with each other.
+    try:
+        cursor.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_feed_token_unique "
+            "ON users(feed_token) "
+            "WHERE feed_token IS NOT NULL AND feed_token != ''"
+        )
+    except sqlite3.OperationalError:
+        # Pre-existing duplicates would block the index. Leave the data alone
+        # and let find_user_by_feed_token's ambiguity check hold the line.
+        pass
+
     conn.commit()
     conn.close()
+
+    # Backfill the standalone/global feed token too.
+    #
+    # This is the counterpart of the per-user backfill above, and it is here
+    # for the same reason: the migration is the only code guaranteed to run on
+    # upgrade. Without it a populated standalone install (auth_enabled=0,
+    # enable_feed_auth=1) comes up with feed_auth_token still NULL, the
+    # middleware correctly fails closed on "enabled but unconfigured", and
+    # every feed and audio request 401s indefinitely. It self-healed only when
+    # a human opened the dashboard, since that was the sole caller of
+    # ensure_global_feed_token - a headless container nobody logs into served
+    # nothing, forever, with no error anywhere.
+    #
+    # Called after the connection above is committed and closed so it does not
+    # contend with this function's own write transaction.
+    ensure_global_feed_token()
 
 @contextmanager
 def get_db_connection():
@@ -385,12 +416,21 @@ def find_user_by_feed_token(token: Optional[str]) -> Optional[dict]:
         ).fetchall()
 
     match = None
+    matches = 0
     for row in rows:
         # Compare every candidate; do not short-circuit on the first hit.
         stored = str(row["feed_token"]).encode('utf-8', 'surrogatepass')
         if hmac.compare_digest(stored, presented):
             match = row
-    return dict(match) if match is not None else None
+            matches += 1
+
+    if matches != 1:
+        # Zero matches is the ordinary rejection. More than one means two
+        # users share a token, which a unique index should now prevent; if it
+        # ever happens, "last row wins" would authenticate the wrong account.
+        # Refuse instead of guessing.
+        return None
+    return dict(match)
 
 
 def get_global_feed_token() -> Optional[str]:
