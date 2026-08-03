@@ -227,9 +227,15 @@ def require_same_origin(request: Request) -> None:
     netloc = urlsplit(origin).netloc.lower() if origin else ""
 
     if not netloc or netloc not in _acceptable_origins(request):
+        # Log the NETLOC, never the raw header. When the browser sends no
+        # Origin we fall back to Referer, which is a full URL — and a feed
+        # request's Referer carries the feed token in its path or query, so
+        # logging `origin` verbatim writes a live bearer credential to disk.
+        # That is the exact leak the access-log redaction filter exists to
+        # prevent; this call site would have reintroduced it.
         logger.warning(
-            "AUTH - Rejected cross-origin/originless %s %s (origin=%r)",
-            request.method, request.url.path, origin or None,
+            "AUTH - Rejected cross-origin/originless %s %s (origin_netloc=%r)",
+            request.method, request.url.path, netloc or None,
         )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

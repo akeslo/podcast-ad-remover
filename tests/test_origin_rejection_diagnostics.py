@@ -160,3 +160,40 @@ def test_the_configured_public_url_alone_is_enough(client):
     )
 
     assert response.status_code != 403, response.text
+
+
+def test_rejection_log_never_contains_the_raw_referer(caplog):
+    """A Referer fallback carries the feed token in its path.
+
+    When the browser sends no Origin, require_same_origin falls back to
+    Referer, which is a full URL. A feed request's Referer holds a live
+    bearer token, so logging the raw value would write a working credential
+    to disk — the same leak the access-log redaction filter exists to stop.
+    Only the netloc may be logged.
+    """
+    import logging
+    from fastapi import HTTPException
+    from starlette.requests import Request
+    from app.web.router import require_same_origin
+
+    token = "sup3r-s3cret-feed-token"
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/admin/system/update",
+        "headers": [
+            (b"referer", f"https://evil.example/feeds/show.xml?auth={token}".encode()),
+            (b"host", b"podcasts.example.com"),
+        ],
+        "query_string": b"",
+    }
+    with caplog.at_level(logging.WARNING):
+        try:
+            require_same_origin(Request(scope))
+        except HTTPException:
+            pass
+
+    logged = " ".join(r.getMessage() for r in caplog.records)
+    assert token not in logged, "the feed token leaked into the rejection log"
+    assert "/feeds/show.xml" not in logged, "the Referer path leaked into the log"
+    assert "evil.example" in logged, "the netloc should still be logged for diagnosis"
