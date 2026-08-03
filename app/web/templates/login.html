@@ -30,21 +30,13 @@
 
             {% else %}
 
-            {% if initial_password %}
-            <div class="alert-warning mb-6">
-                <svg class="w-5 h-5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                    <path fill-rule="evenodd"
-                        d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
-                        clip-rule="evenodd" />
-                </svg>
-                <div>
-                    <p class="font-bold mb-1">⚠️ Save this password!</p>
-                    <code
-                        class="block bg-surface-base px-3 py-2 rounded-lg text-lg font-mono mt-2 select-all border border-white/[0.08]">{{ initial_password }}</code>
-                    <p class="text-xs mt-2 opacity-80">You'll need to change it after first login.</p>
-                </div>
-            </div>
-            {% endif %}
+            {#
+              The generated admin password is deliberately NOT rendered here.
+              This page is exempt from auth_middleware, so anything printed on
+              it is readable by every anonymous visitor. The password is
+              written once to the server log at account-creation time; read it
+              from there (e.g. `docker logs`).
+            #}
 
             {% if error %}
             <div class="alert-error mb-6">

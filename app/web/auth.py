@@ -87,11 +87,16 @@ async def auth_middleware(request: Request, call_next):
     # Skip auth/IP check for specific paths
     # static: always public
     # feeds/audio: public to world (IP check skipped), but might be protected by Feed Auth elsewhere
-    if path in ["/login", "/request-access", "/submit-access-request"] or \
-       path.startswith("/static/") or \
-       path.startswith("/feeds/") or \
-       path.startswith("/feed/") or \
-       path.startswith("/audio/"):
+    #
+    # The prefixes below are matched with an explicit trailing slash and the
+    # bare path is listed separately, so the exemption covers exactly the
+    # subtree it names. This is load-bearing, not stylistic: the
+    # administrative route /feed-token/rotate sits one hyphen away from
+    # "/feed/" and would be silently made public by a looser prefix such as
+    # "/feed". Do not drop the slashes.
+    PUBLIC_PATHS = ("/login", "/request-access", "/submit-access-request")
+    PUBLIC_PREFIXES = ("/static/", "/feeds/", "/feed/", "/audio/")
+    if path in PUBLIC_PATHS or path.startswith(PUBLIC_PREFIXES):
         return await call_next(request)
     
     # Check if auth is enabled

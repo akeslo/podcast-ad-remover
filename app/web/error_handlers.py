@@ -49,10 +49,7 @@ async def generic_error_handler(request: Request, exc: Exception) -> HTMLRespons
         )
     
     # Return HTML error page
-    return templates.TemplateResponse(
-        "error.html",
-        {
-            "request": request,
+    return templates.TemplateResponse(request, "error.html", {
             "status_code": 500,
             "title": "Internal Server Error",
             "message": "An unexpected error occurred. Please try again later."
@@ -76,10 +73,7 @@ async def not_found_handler(request: Request, exc: Exception) -> HTMLResponse:
             }
         )
     
-    return templates.TemplateResponse(
-        "error.html",
-        {
-            "request": request,
+    return templates.TemplateResponse(request, "error.html", {
             "status_code": 404,
             "title": "Page Not Found",
             "message": "The page you're looking for doesn't exist."
@@ -105,10 +99,7 @@ async def forbidden_handler(request: Request, exc: Exception) -> HTMLResponse:
             }
         )
     
-    return templates.TemplateResponse(
-        "error.html",
-        {
-            "request": request,
+    return templates.TemplateResponse(request, "error.html", {
             "status_code": 403,
             "title": "Access Denied",
             "message": "You don't have permission to access this resource."
@@ -134,10 +125,7 @@ async def unauthorized_handler(request: Request, exc: Exception) -> HTMLResponse
             }
         )
     
-    return templates.TemplateResponse(
-        "error.html",
-        {
-            "request": request,
+    return templates.TemplateResponse(request, "error.html", {
             "status_code": 401,
             "title": "Authentication Required",
             "message": "Please log in to access this resource."
@@ -193,10 +181,7 @@ def configure_error_handlers(app):
                 }
             )
         
-        return templates.TemplateResponse(
-            "error.html",
-            {
-                "request": request,
+        return templates.TemplateResponse(request, "error.html", {
                 "status_code": exc.status_code,
                 "title": f"Error {exc.status_code}",
                 "message": exc.detail if isinstance(exc.detail, str) else "An error occurred."

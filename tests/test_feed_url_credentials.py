@@ -8,6 +8,7 @@ checking one named key: a refactor that moves the password into a
 differently-named field should still fail these.
 """
 import base64
+import html
 import json
 
 import pytest
@@ -69,6 +70,12 @@ def _decode_auth_param(url):
     assert "auth=" in url, url
     encoded = url.split("auth=", 1)[1].split("&", 1)[0]
     return base64.b64decode(encoded).decode("utf-8")
+
+
+# State-changing admin routes now require a same-origin browser request
+# (app.web.router.require_same_origin). TestClient's default base_url is
+# http://testserver, so that is the legitimate origin here.
+SAME_ORIGIN = {"Origin": "http://testserver"}
 
 
 class _FakeUser:
@@ -137,7 +144,9 @@ def test_approval_redirect_contains_no_credential(client):
         conn.commit()
 
     response = client.post(
-        f"/admin/access-requests/{request_id}/approve", follow_redirects=False
+        f"/admin/access-requests/{request_id}/approve",
+        headers=SAME_ORIGIN,
+        follow_redirects=False,
     )
     assert response.status_code == 303
 
@@ -151,14 +160,19 @@ def test_approval_redirect_contains_no_credential(client):
     temp_password = session.get("_flash", {}).get("approved_temp_password")
     assert temp_password, "temporary password was not handed over via flash"
 
-    # It renders once...
+    # It renders once. Compare against the HTML-escaped form: generated
+    # passwords routinely contain '&', '<' or a quote, and Jinja autoescapes
+    # them, so a raw substring check fails on roughly one run in four.
+    escaped = html.escape(temp_password)
     page = client.get("/admin/access")
-    assert temp_password in page.text
+    assert escaped in page.text
 
-    # ...and is cleared, so it does not linger in the session.
+    # ...and is cleared, so it does not linger in the session. Checked in both
+    # forms, since this is the assertion that actually matters.
     assert "_flash" not in _decode_session_cookie(client)
     second_page = client.get("/admin/access")
     assert temp_password not in second_page.text
+    assert escaped not in second_page.text
 
 
 # --------------------------------------------------------------------------
@@ -234,7 +248,16 @@ def test_standalone_feed_url_uses_the_global_token():
     global_token = ensure_global_feed_token()
 
     decoded = base64.b64decode(
-        build_feed_auth_token({"enable_feed_auth": 1, "auth_enabled": 0})
+        build_feed_auth_token(
+            {
+                "enable_feed_auth": 1,
+                "auth_enabled": 0,
+                # The function reads the username from this dict, not the DB.
+                # The old test omitted it and was only passing because of an
+                # `or "feed"` fallback that has since been removed.
+                "feed_auth_username": "feeduser",
+            }
+        )
     ).decode("utf-8")
 
     assert decoded == f"feeduser:{global_token}"
@@ -254,6 +277,7 @@ def test_settings_save_never_stores_a_feed_password(client):
             "feed_auth_username": "feeduser",
             "feed_auth_password": TEST_PASSWORD,
         },
+        headers=SAME_ORIGIN,
         follow_redirects=False,
     )
 
@@ -292,7 +316,9 @@ def test_rotate_route_rotates_the_global_token(client):
     _set_settings(enable_feed_auth=1, feed_auth_username="feeduser")
     before = ensure_global_feed_token()
 
-    response = client.post("/feed-token/rotate", follow_redirects=False)
+    response = client.post(
+        "/feed-token/rotate", headers=SAME_ORIGIN, follow_redirects=False
+    )
     assert response.status_code == 303
     assert response.headers["location"] == "/"
     assert get_global_feed_token() != before

@@ -10,7 +10,6 @@ from app.web.rate_limiter import login_rate_limiter, check_rate_limit
 from app.infra.database import get_db_connection
 from datetime import datetime
 import os
-import hmac
 import logging
 
 logger = logging.getLogger(__name__)
@@ -169,6 +168,158 @@ def pop_flash(request: Request) -> dict:
     return flash if isinstance(flash, dict) else {}
 
 
+def _acceptable_origins(request: Request) -> set:
+    """Hosts that a same-origin browser request may legitimately declare.
+
+    Behind a reverse proxy the Host header the app sees is often the internal
+    one while the browser's Origin carries the public name, so the configured
+    external URL and the forwarded host both count.
+    """
+    from urllib.parse import urlsplit
+
+    hosts = set()
+
+    def _add(value):
+        if not value:
+            return
+        value = value.strip()
+        if "//" in value:
+            value = urlsplit(value).netloc
+        if value:
+            hosts.add(value.lower())
+
+    # Host, plus the operator-configured public name. Deliberately NOT
+    # X-Forwarded-Host: it is set by the caller on any request the proxy does
+    # not overwrite, so trusting it would let a request nominate its own
+    # acceptable origin. app_external_url covers the reverse-proxy case
+    # properly, because an operator configured it.
+    _add(request.headers.get("host"))
+    try:
+        _add(get_global_settings().get("app_external_url"))
+    except Exception:  # pragma: no cover - settings unavailable
+        pass
+    return hosts
+
+
+def require_same_origin(request: Request) -> None:
+    """Reject state-changing requests that are not same-origin browser posts.
+
+    This is the *only* authorisation material available in standalone mode
+    (auth_enabled = 0), where the app has no users, no sessions and therefore
+    nothing to authenticate against - `require_admin` degrades to a no-op
+    dummy admin there by design. It is a CSRF boundary, not an authentication
+    boundary: it stops drive-by cross-site posts and blind scripted loops
+    (curl sends no Origin), and it deliberately does not pretend to stop an
+    attacker who can already reach the admin UI. In standalone mode that
+    remaining boundary is the IP allowlist enforced in `auth_middleware`.
+
+    Safe methods are untouched, so ordinary navigation still works.
+    """
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return
+
+    from urllib.parse import urlsplit
+
+    origin = request.headers.get("origin")
+    if not origin:
+        referer = request.headers.get("referer")
+        origin = referer or ""
+    netloc = urlsplit(origin).netloc.lower() if origin else ""
+
+    if not netloc or netloc not in _acceptable_origins(request):
+        logger.warning(
+            "AUTH - Rejected cross-origin/originless %s %s (origin=%r)",
+            request.method, request.url.path, origin or None,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cross-origin or origin-less request rejected",
+        )
+
+
+def require_admin_action(request: Request) -> None:
+    """Authorisation for every administrative route.
+
+    Two independent checks, because neither alone covers both deployments:
+
+    * `require_admin` is the real gate whenever user auth is enabled. Without
+      it these routes relied entirely on `auth_middleware`, which skips its
+      `/admin` privilege check when `auth_enabled` is 0 - so the switch that
+      turns feed auth off sat on the public side of the door.
+    * `require_same_origin` covers the standalone deployment, where there is
+      no user to be an admin at all.
+    """
+    require_admin(request)
+    require_same_origin(request)
+
+
+# --- One-time "your feed URLs changed" upgrade notice ---------------------
+#
+# Feed URLs used to be base64(username:account_password). They are now
+# base64(username:feed_token), and there is deliberately no password fallback
+# on the feed routes. That means every URL an existing subscriber already
+# pasted into a podcast app starts returning 401 the moment they upgrade.
+# Podcast clients do not surface a 401 on a background refresh - they simply
+# stop updating - so without this notice the user's podcasts stop on a random
+# day with no signal anywhere.
+#
+# The marker is a file under DATA_DIR rather than an app_settings column, on
+# purpose: the schema is owned elsewhere, and a file needs no migration to
+# land. A *fresh* install is auto-acknowledged the first time the dashboard
+# renders with zero subscriptions, so only an upgraded install - one that
+# already had subscriptions when this code first ran - ever sees the banner.
+
+FEED_URL_NOTICE_MARKER = "feed-url-migration-acknowledged"
+
+
+def _feed_url_notice_marker_path() -> str:
+    from app.core.config import settings as app_settings
+
+    return os.path.join(app_settings.DATA_DIR, FEED_URL_NOTICE_MARKER)
+
+
+def _feed_url_notice_acknowledged() -> bool:
+    try:
+        return os.path.exists(_feed_url_notice_marker_path())
+    except Exception:  # pragma: no cover - unreadable DATA_DIR
+        logger.exception("Could not read the feed-URL notice marker")
+        return True  # fail closed: never nag when we cannot record a dismissal
+
+
+def acknowledge_feed_url_notice() -> None:
+    """Persist the dismissal so the banner does not come back on reload."""
+    path = _feed_url_notice_marker_path()
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(datetime.now().isoformat())
+    except Exception:  # pragma: no cover - read-only DATA_DIR
+        logger.exception("Could not persist the feed-URL notice dismissal")
+
+
+def feed_url_notice_pending(global_settings: dict, subscription_count: int) -> bool:
+    """True when this install still owes the user the feed-URL-changed notice."""
+    if not is_feed_auth_enabled(global_settings):
+        # Without feed auth the URLs never carried a credential, so nothing
+        # about them changed.
+        return False
+    if _feed_url_notice_acknowledged():
+        return False
+    if subscription_count == 0:
+        # Fresh install: there are no already-shared URLs to invalidate.
+        # Acknowledge silently so the banner never appears later.
+        acknowledge_feed_url_notice()
+        return False
+    return True
+
+
+@router.post("/feed-url-notice/dismiss", dependencies=[Depends(require_same_origin)])
+async def dismiss_feed_url_notice(request: Request):
+    """Dismiss the one-time feed-URL-changed banner, permanently."""
+    acknowledge_feed_url_notice()
+    return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
+
+
 def is_feed_auth_enabled(global_settings: dict) -> bool:
     """True when feed URLs must carry a credential."""
     value = global_settings.get('enable_feed_auth')
@@ -205,8 +356,19 @@ def build_feed_auth_token(global_settings: dict, user_obj=None) -> str:
         auth_user = username
     else:
         # Standalone auth: one shared install-wide feed token.
+        #
+        # No `or 'feed'` fallback. The unified-feed validator authorises only
+        # when the presented username equals app_settings.feed_auth_username,
+        # so a guessed default would build a URL the app itself rejects with
+        # 401 - a silently broken feed rather than an honest error. Same
+        # fail-loud rule as the auth_enabled branch above.
         credential = ensure_global_feed_token()
-        auth_user = global_settings.get('feed_auth_username') or 'feed'
+        auth_user = global_settings.get('feed_auth_username')
+        if not auth_user:
+            raise RuntimeError(
+                "Cannot build a feed URL: feed auth is enabled in standalone "
+                "mode but no feed_auth_username is configured."
+            )
 
     if not credential:
         raise RuntimeError("Cannot build a feed URL: no feed token available.")
@@ -254,17 +416,20 @@ def get_pending_requests_count():
 async def login_page(request: Request):
     """Display login page or first-time setup."""
     with get_db_connection() as conn:
-        settings = conn.execute("SELECT auth_enabled, initial_password FROM app_settings WHERE id = 1").fetchone()
+        # `initial_password` is deliberately NOT selected. /login is exempt
+        # from auth_middleware, so anything rendered here is readable by
+        # anyone who can reach the app. The generated admin password is
+        # surfaced in the container logs at creation time instead; it must
+        # never travel back out through an unauthenticated page.
+        settings = conn.execute("SELECT auth_enabled FROM app_settings WHERE id = 1").fetchone()
         user_count = conn.execute("SELECT COUNT(*) as count FROM users").fetchone()['count']
     
     # Check if this is first launch
     first_launch = user_count == 0
     
-    return templates.TemplateResponse("login.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "login.html", {
         "csp_nonce": get_csp_nonce(request),
         "first_launch": first_launch,
-        "initial_password": settings['initial_password'] if settings else None,
         "auth_enabled": settings['auth_enabled'] if settings else False
     })
 
@@ -279,8 +444,7 @@ async def login(request: Request, username: str = Form(...), password: str = For
         check_rate_limit(client_ip)
     except HTTPException as e:
         # Return user-friendly error page instead of raw exception
-        return templates.TemplateResponse("login.html", {
-            "request": request,
+        return templates.TemplateResponse(request, "login.html", {
         "csp_nonce": get_csp_nonce(request),
             "error": e.detail,
             "first_launch": False,
@@ -300,8 +464,7 @@ async def login(request: Request, username: str = Form(...), password: str = For
         if is_locked:
             error_msg = f"Too many failed login attempts. Your IP has been locked for {login_rate_limiter.lockout_seconds // 60} minutes."
         
-        return templates.TemplateResponse("login.html", {
-            "request": request,
+        return templates.TemplateResponse(request, "login.html", {
         "csp_nonce": get_csp_nonce(request),
             "error": error_msg,
             "first_launch": False,
@@ -337,8 +500,7 @@ async def change_password_page(request: Request, user: dict = Depends(require_au
     with get_db_connection() as conn:
         settings = conn.execute("SELECT require_password_change FROM app_settings WHERE id = 1").fetchone()
     
-    return templates.TemplateResponse("change_password.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "change_password.html", {
         "csp_nonce": get_csp_nonce(request),
         "user": user,
         "required": settings['require_password_change'] if settings else False
@@ -354,8 +516,7 @@ async def change_password(
 ):
     """Handle password change submission."""
     if new_password != confirm_password:
-        return templates.TemplateResponse("change_password.html", {
-            "request": request,
+        return templates.TemplateResponse(request, "change_password.html", {
         "csp_nonce": get_csp_nonce(request),
             "user": user,
             "error": "Passwords do not match"
@@ -366,8 +527,7 @@ async def change_password(
         user_row = conn.execute("SELECT password_hash FROM users WHERE id = ?", (user.id,)).fetchone()
     
     if not verify_password(current_password, user_row['password_hash']):
-        return templates.TemplateResponse("change_password.html", {
-            "request": request,
+        return templates.TemplateResponse(request, "change_password.html", {
         "csp_nonce": get_csp_nonce(request),
             "user": user,
             "error": "Current password is incorrect"
@@ -377,7 +537,7 @@ async def change_password(
     new_hash = hash_password(new_password)
     with get_db_connection() as conn:
         conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (new_hash, user.id))
-        conn.execute("UPDATE app_settings SET require_password_change = 0, initial_password = NULL WHERE id = 1")
+        conn.execute("UPDATE app_settings SET require_password_change = 0 WHERE id = 1")
         conn.commit()
     
     # No password is kept in the session; the feed token is unaffected by a
@@ -388,7 +548,7 @@ async def change_password(
 @router.get("/request-access", response_class=HTMLResponse)
 async def request_access_page(request: Request):
     """Display access request form."""
-    return templates.TemplateResponse("request_access.html", {"request": request})
+    return templates.TemplateResponse(request, "request_access.html", {})
 
 @router.post("/submit-access-request")
 async def submit_access_request(
@@ -407,13 +567,12 @@ async def submit_access_request(
         )
         conn.commit()
     
-    return templates.TemplateResponse("request_access.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "request_access.html", {
         "csp_nonce": get_csp_nonce(request),
         "success": "Your access request has been submitted. You will be notified when it is reviewed."
     })
 
-@router.get("/admin", response_class=RedirectResponse)
+@router.get("/admin", response_class=RedirectResponse, dependencies=[Depends(require_admin_action)])
 async def admin_root():
     return RedirectResponse(url="/admin/system")
 
@@ -422,11 +581,10 @@ async def view_settings_redirect():
     return RedirectResponse(url="/admin/system")
 
 # --- Admin: System ---
-@router.get("/admin/system", response_class=HTMLResponse)
+@router.get("/admin/system", response_class=HTMLResponse, dependencies=[Depends(require_admin_action)])
 async def admin_system(request: Request):
     user = get_current_user(request)
-    return templates.TemplateResponse("admin/system.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "admin/system.html", {
         "csp_nonce": get_csp_nonce(request),
         "user": user,
         "settings": get_global_settings(),
@@ -434,7 +592,7 @@ async def admin_system(request: Request):
         "active_tab": "system"
     })
 
-@router.post("/admin/system/update")
+@router.post("/admin/system/update", dependencies=[Depends(require_admin_action)])
 async def update_system_settings(
     request: Request,
     concurrent_downloads: int = Form(2),
@@ -485,10 +643,17 @@ async def update_system_settings(
                     ("admin", password_hash, 1)
                 )
                 
-                # Store initial password and set require_password_change
+                # The plaintext password is NOT persisted. It used to be
+                # written to app_settings.initial_password and rendered on
+                # the unauthenticated /login page; the operator now reads it
+                # once from the server log and nowhere else.
                 conn.execute(
-                    "UPDATE app_settings SET initial_password = ?, require_password_change = 1 WHERE id = 1",
-                    (initial_password,)
+                    "UPDATE app_settings SET require_password_change = 1 WHERE id = 1"
+                )
+                logger.warning(
+                    "AUTH - Created admin user 'admin' with one-time password: %s "
+                    "(change it at first login; it is not stored anywhere)",
+                    initial_password,
                 )
         
         # Check if app_external_url is changing
@@ -537,7 +702,7 @@ async def update_system_settings(
     return RedirectResponse(url=url, status_code=status.HTTP_303_SEE_OTHER)
 
 # --- Admin: AI ---
-@router.get("/admin/ai", response_class=HTMLResponse)
+@router.get("/admin/ai", response_class=HTMLResponse, dependencies=[Depends(require_admin_action)])
 async def admin_ai(request: Request):
     from app.core.config import settings
     
@@ -551,8 +716,7 @@ async def admin_ai(request: Request):
 
     user = get_current_user(request)
 
-    return templates.TemplateResponse("admin/ai.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "admin/ai.html", {
         "csp_nonce": get_csp_nonce(request),
         "user": user,
         "settings": get_global_settings(),
@@ -561,7 +725,7 @@ async def admin_ai(request: Request):
         "env_keys": env_keys
     })
 
-@router.post("/admin/ai/update")
+@router.post("/admin/ai/update", dependencies=[Depends(require_admin_action)])
 async def update_ai_settings(
     request: Request,
     whisper_model: str = Form("base"),
@@ -618,7 +782,7 @@ async def update_ai_settings(
         conn.commit()
     return RedirectResponse(url="/admin/ai", status_code=303)
 
-@router.post("/admin/ai/test")
+@router.post("/admin/ai/test", dependencies=[Depends(require_admin_action)])
 async def test_ai_connection(
     provider: str = Form(...),
     api_key: str = Form(None),
@@ -640,7 +804,7 @@ async def test_ai_connection(
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
-@router.get("/admin/ai/refresh/{provider}")
+@router.get("/admin/ai/refresh/{provider}", dependencies=[Depends(require_admin_action)])
 async def refresh_models(provider: str):
     try:
         from app.core.ai_services import AdDetector
@@ -655,7 +819,7 @@ async def refresh_models(provider: str):
         return {"error": str(e)}
 
 # --- Admin: Prompts ---
-@router.get("/admin/prompts", response_class=HTMLResponse)
+@router.get("/admin/prompts", response_class=HTMLResponse, dependencies=[Depends(require_admin_action)])
 async def admin_prompts(request: Request):
     # Default prompts from ai_services.py
     default_prompts = {
@@ -671,8 +835,7 @@ Example: [{"start": 0.0, "end": 10.0, "label": "Ad", "reason": "Sponsor read for
     
     user = get_current_user(request)
 
-    return templates.TemplateResponse("admin/prompts.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "admin/prompts.html", {
         "csp_nonce": get_csp_nonce(request),
         "user": user,
         "settings": get_global_settings(),
@@ -681,7 +844,7 @@ Example: [{"start": 0.0, "end": 10.0, "label": "Ad", "reason": "Sponsor read for
         "active_tab": "prompts"
     })
 
-@router.post("/admin/prompts")
+@router.post("/admin/prompts", dependencies=[Depends(require_admin_action)])
 async def save_prompts(request: Request):
     user = get_current_user(request)
     if not user or not getattr(user, 'is_admin', False):
@@ -722,7 +885,7 @@ async def save_prompts(request: Request):
     
     return {"status": "success"}
 
-@router.post("/admin/prompts/reset")
+@router.post("/admin/prompts/reset", dependencies=[Depends(require_admin_action)])
 async def reset_prompts(request: Request):
     user = get_current_user(request)
     if not user or not getattr(user, 'is_admin', False):
@@ -760,13 +923,12 @@ Example: [{"start": 0.0, "end": 10.0, "label": "Ad", "reason": "Sponsor read for
     return {"status": "success"}
 
 # --- Admin: Queue ---
-@router.get("/admin/queue", response_class=HTMLResponse)
+@router.get("/admin/queue", response_class=HTMLResponse, dependencies=[Depends(require_admin_action)])
 async def admin_queue(request: Request):
     user = get_current_user(request)
     queue = ep_repo.get_queue()
     recently_processed = ep_repo.get_recently_processed(days=3)
-    return templates.TemplateResponse("admin/queue.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "admin/queue.html", {
         "csp_nonce": get_csp_nonce(request),
         "user": user,
         "queue": queue,
@@ -775,7 +937,7 @@ async def admin_queue(request: Request):
         "active_tab": "queue"
     })
 
-@router.post("/admin/queue/cancel/{episode_id}")
+@router.post("/admin/queue/cancel/{episode_id}", dependencies=[Depends(require_admin_action)])
 async def cancel_episode(episode_id: int):
     # Soft delete an episode (marks as ignored, cleans up files)
     from app.core.processor import Processor
@@ -783,7 +945,7 @@ async def cancel_episode(episode_id: int):
     await proc.delete_episode(episode_id)
     return RedirectResponse(url="/admin/queue", status_code=303)
 
-@router.post("/admin/queue/retry/{episode_id}")
+@router.post("/admin/queue/retry/{episode_id}", dependencies=[Depends(require_admin_action)])
 async def retry_episode(episode_id: int):
     # Check if already processing?
     status = ep_repo.get_status(episode_id)
@@ -841,7 +1003,7 @@ async def manual_download_episode(episode_id: int, request: Request):
 
 
 # --- Admin: Logs ---
-@router.get("/admin/logs", response_class=HTMLResponse)
+@router.get("/admin/logs", response_class=HTMLResponse, dependencies=[Depends(require_admin_action)])
 async def admin_logs(request: Request, lines: int = 1000, level: str = "ALL"):
     from app.core.config import settings
     log_path = os.path.join(settings.DATA_DIR, "app.log")
@@ -878,8 +1040,7 @@ async def admin_logs(request: Request, lines: int = 1000, level: str = "ALL"):
     
     user = get_current_user(request)
 
-    return templates.TemplateResponse("admin/logs.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "admin/logs.html", {
         "csp_nonce": get_csp_nonce(request),
         "user": user,
         "logs": logs,
@@ -894,13 +1055,12 @@ async def admin_logs(request: Request, lines: int = 1000, level: str = "ALL"):
 @router.get("/subscribe/apple", response_class=HTMLResponse)
 async def apple_subscribe_page(request: Request, url: str):
     """Render the Apple Podcasts subscription instruction page."""
-    return templates.TemplateResponse("apple_subscribe.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "apple_subscribe.html", {
         "csp_nonce": get_csp_nonce(request),
         "feed_url": url
     })
 
-@router.get("/admin/access", response_class=HTMLResponse)
+@router.get("/admin/access", response_class=HTMLResponse, dependencies=[Depends(require_admin_action)])
 async def admin_access(request: Request):
     from app.infra.database import get_db_connection
     from datetime import datetime, timedelta
@@ -934,8 +1094,7 @@ async def admin_access(request: Request):
             "SELECT * FROM users ORDER BY created_at DESC"
         ).fetchall()
     
-    return templates.TemplateResponse("admin/access_requests.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "admin/access_requests.html", {
         "csp_nonce": get_csp_nonce(request),
         "user": user,
         "active_tab": "access",
@@ -949,7 +1108,7 @@ async def admin_access(request: Request):
     })
 
 
-@router.post("/feed-token/rotate")
+@router.post("/feed-token/rotate", dependencies=[Depends(require_admin_action)])
 async def rotate_own_feed_token(request: Request):
     """Rotate the current user's feed token, revoking every existing feed URL.
 
@@ -980,7 +1139,7 @@ async def rotate_own_feed_token(request: Request):
     set_flash(request, feed_token_rotated=True)
     return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
 
-@router.post("/admin/users/{user_id}/password")
+@router.post("/admin/users/{user_id}/password", dependencies=[Depends(require_admin_action)])
 async def admin_change_user_password(
     request: Request, 
     user_id: int, 
@@ -1019,7 +1178,7 @@ async def admin_change_user_password(
         status_code=status.HTTP_303_SEE_OTHER
     )
 
-@router.delete("/admin/users/{user_id}")
+@router.delete("/admin/users/{user_id}", dependencies=[Depends(require_admin_action)])
 async def delete_user(user_id: int, request: Request, user: dict = Depends(require_admin)):
     # Check admin
     if user.id == user_id:
@@ -1039,7 +1198,7 @@ async def delete_user(user_id: int, request: Request, user: dict = Depends(requi
     )
 
 # --- Admin: Approve Access Request ---
-@router.post("/admin/access-requests/{request_id}/approve")
+@router.post("/admin/access-requests/{request_id}/approve", dependencies=[Depends(require_admin_action)])
 async def approve_access_request(request: Request, request_id: int):
     from app.infra.database import get_db_connection
     from app.web.auth_utils import hash_password, generate_secure_password
@@ -1097,7 +1256,7 @@ async def approve_access_request(request: Request, request_id: int):
     return RedirectResponse(url="/admin/access", status_code=303)
 
 # --- Admin: Deny Access Request ---
-@router.post("/admin/access-requests/{request_id}/deny")
+@router.post("/admin/access-requests/{request_id}/deny", dependencies=[Depends(require_admin_action)])
 async def deny_access_request(request: Request, request_id: int):
     from app.infra.database import get_db_connection
     
@@ -1122,7 +1281,7 @@ async def deny_access_request(request: Request, request_id: int):
     return RedirectResponse(url="/admin/access?denied=1", status_code=303)
 
 # --- Admin: Update User Username ---
-@router.post("/admin/users/{user_id}/username")
+@router.post("/admin/users/{user_id}/username", dependencies=[Depends(require_admin_action)])
 async def update_user_username(request: Request, user_id: int, username: str = Form(...)):
     require_admin(request)
     with get_db_connection() as conn:
@@ -1136,7 +1295,7 @@ async def update_user_username(request: Request, user_id: int, username: str = F
     return RedirectResponse(url="/admin/access", status_code=303)
 
 # --- Admin: Update Request Username ---
-@router.post("/admin/access-requests/{request_id}/username")
+@router.post("/admin/access-requests/{request_id}/username", dependencies=[Depends(require_admin_action)])
 async def update_request_username(request: Request, request_id: int, username: str = Form(...)):
     require_admin(request)
     with get_db_connection() as conn:
@@ -1273,8 +1432,7 @@ def _render_index(request: Request, error: str = None):
             "podcast_addict": f"podcastaddict://subscribe/{rss_url}"
         }
 
-    return templates.TemplateResponse("index.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "index.html", {
         "csp_nonce": get_csp_nonce(request), 
         "user": user,
         "subscriptions": subs_with_links, 
@@ -1285,6 +1443,7 @@ def _render_index(request: Request, error: str = None):
         "unified_links": unified_links,
         "settings": global_settings,
         "flash": pop_flash(request),
+        "feed_url_notice": feed_url_notice_pending(global_settings, len(subs)),
     })
 
 @router.get("/", response_class=HTMLResponse)
@@ -1294,22 +1453,21 @@ async def index(request: Request):
 from app.core.processor import Processor
 
 # --- Admin: Global Subscription Settings ---
-@router.get("/admin/global-subscription-settings", response_class=HTMLResponse)
+@router.get("/admin/global-subscription-settings", response_class=HTMLResponse, dependencies=[Depends(require_admin_action)])
 async def admin_global_subscription_settings(request: Request):
     user = get_current_user(request)
     
     with get_db_connection() as conn:
         settings_row = conn.execute("SELECT * FROM app_settings WHERE id = 1").fetchone()
         
-    return templates.TemplateResponse("admin/global_subscription_settings.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "admin/global_subscription_settings.html", {
         "csp_nonce": get_csp_nonce(request),
         "user": user,
         "settings": settings_row,
         "active_tab": "global_subs"
     })
 
-@router.post("/admin/global-subscription-settings/update")
+@router.post("/admin/global-subscription-settings/update", dependencies=[Depends(require_admin_action)])
 async def update_global_subscription_settings(
     request: Request,
     default_remove_ads: bool = Form(False),
@@ -1457,8 +1615,7 @@ async def view_subscription(request: Request, id: int):
     # Get total listen count for this subscription
     total_listens = ep_repo.get_subscription_listen_count(sub.id)
 
-    return templates.TemplateResponse("episodes.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "episodes.html", {
         "csp_nonce": get_csp_nonce(request), 
         "user": user,
         "subscription": sub, 
@@ -1598,8 +1755,7 @@ async def view_transcript(id: int, request: Request):
             return f"{h}:{m:02d}:{s:02d}"
         return f"{m}:{s:02d}"
 
-    return templates.TemplateResponse("transcript.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "transcript.html", {
         "csp_nonce": get_csp_nonce(request),
         "episode": row,
         "transcript_data": data,
@@ -1671,6 +1827,48 @@ async def get_report(id: int):
             
     raise HTTPException(status_code=404, detail="Report not found")
 
+def _presented_feed_credential(request: Request):
+    """The exact ``?auth=`` value to carry from a feed request into its
+    enclosure URLs, or None.
+
+    Feed and audio requests are authorised in exactly one place -
+    ``app.web.middleware.feed_auth_middleware`` - which has already run and
+    approved this request by the time a route body executes. These routes
+    therefore do no validation of their own; they only need to forward a
+    credential the client can reuse on the audio URLs the feed points at.
+
+    Forwarding the caller's own credential verbatim is what keeps the two
+    ends in agreement. The previous code decoded it, split it on ':' and
+    re-encoded a base64("user:token") envelope, which meant a client that
+    presented a bare token (a shape the middleware accepts) got audio URLs
+    with no credential at all, and a 401 on every download.
+    """
+    presented = request.query_params.get('auth')
+    if presented:
+        return presented
+
+    auth_header = request.headers.get('Authorization') or ''
+    if auth_header.startswith('Basic '):
+        # Hand back the same Basic blob; the middleware accepts it on the
+        # audio routes too.
+        encoded = auth_header[len('Basic '):].strip()
+        if encoded:
+            return encoded
+    return None
+
+
+def _inject_enclosure_credential(xml_content: str, credential: str) -> str:
+    """Append ?auth=<credential> to every enclosure URL in the feed."""
+    import re
+
+    def inject(match):
+        url = match.group(2)
+        separator = "&" if "?" in url else "?"
+        return f'{match.group(1)}{url}{separator}auth={credential}'
+
+    return re.sub(r'(enclosure\s+url=")(https?://[^"]+)', inject, xml_content)
+
+
 @router.get("/feeds/{slug}.xml")
 async def get_individual_feed(slug: str, request: Request):
     """Serve individual podcast RSS feed with optional token injection for audio URLs."""
@@ -1678,9 +1876,7 @@ async def get_individual_feed(slug: str, request: Request):
     from app.core.rss_gen import RSSGenerator
     from app.core.config import settings as app_settings
     from fastapi.responses import FileResponse, Response
-    import base64
-    import re
-    
+
     sub_repo = SubscriptionRepository()
     sub = sub_repo.get_by_slug(slug)
     if not sub:
@@ -1694,159 +1890,71 @@ async def get_individual_feed(slug: str, request: Request):
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="Feed generation failed")
     
-    # Check if we should inject auth tokens
     settings = get_global_settings()
-    auth_enabled_val = settings.get('enable_feed_auth')
-    is_auth_enabled = str(auth_enabled_val).lower() in ('1', 'true', 'yes', 'on') if auth_enabled_val is not None else False
-    
-    # Extract credentials from request (header or query param)
-    username = None
-    password = None
-    
-    auth_header = request.headers.get('Authorization')
-    if auth_header and auth_header.startswith('Basic '):
-        try:
-            encoded = auth_header.split(' ')[1]
-            decoded = base64.b64decode(encoded).decode('utf-8')
-            username, password = decoded.split(':', 1)
-        except:
-            pass
-    else:
-        auth_param = request.query_params.get('auth')
-        if auth_param:
-            try:
-                decoded = base64.b64decode(auth_param).decode('utf-8')
-                username, password = decoded.split(':', 1)
-            except:
-                pass
-    
-    # Set no-cache headers
     cache_headers = {
         "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0",
         "Pragma": "no-cache",
         "Expires": "0"
     }
-    
-    # If auth is enabled and we have credentials, inject token into audio URLs
-    if is_auth_enabled and username and password:
+
+    # Authorisation already happened in feed_auth_middleware. All that is left
+    # is forwarding the caller's credential onto the audio URLs.
+    credential = _presented_feed_credential(request)
+    if is_feed_auth_enabled(settings) and credential:
         try:
             with open(file_path, "r", encoding="utf-8") as f:
-                xml_content = f.read()
-            
-            token = base64.b64encode(f"{username}:{password}".encode()).decode()
-            
-            def inject_auth(match):
-                url = match.group(2)
-                separator = "&" if "?" in url else "?"
-                return f'{match.group(1)}{url}{separator}auth={token}'
-
-            xml_content = re.sub(r'(enclosure\s+url=")(https?://[^"]+)', inject_auth, xml_content)
-            
+                xml_content = _inject_enclosure_credential(f.read(), credential)
             return Response(content=xml_content, media_type="application/xml", headers=cache_headers)
         except Exception as e:
             logger.error(f"Error injecting auth into feed {slug}: {e}")
-    
+
     return FileResponse(file_path, media_type="application/xml", headers=cache_headers)
 
 @router.get("/feed/unified")
 @router.get("/feed/unified.xml")
 async def get_unified_feed(request: Request):
-    """Serve the unified RSS feed with optional authentication."""
-    # Check Auth if enabled
-    settings = get_global_settings()
-    auth_enabled_val = settings.get('enable_feed_auth')
-    is_auth_enabled = str(auth_enabled_val).lower() in ('1', 'true', 'yes', 'on') if auth_enabled_val is not None else False
+    """Serve the unified RSS feed.
 
-    if is_auth_enabled:
-        # Check Basic Auth header OR query param
-        import base64
-        auth_header = request.headers.get('Authorization')
-        auth_token = request.query_params.get('auth')
-        authorized = False
-        username = None
-        password = None
-        
-        encoded_creds = None
-        if auth_header and auth_header.startswith('Basic '):
-            encoded_creds = auth_header.split(' ')[1]
-        elif auth_token:
-            encoded_creds = auth_token
-            
-        if encoded_creds:
-            try:
-                decoded_creds = base64.b64decode(encoded_creds).decode('utf-8')
-                username, password = decoded_creds.split(':', 1)
-                
-                # `password` here is the feed token, not an account password.
-                # Account passwords are no longer accepted on feed routes at
-                # all - there is no fallback branch that would take one.
-                if settings.get('auth_enabled'):
-                    # Validate the presented feed token against app users.
-                    from app.infra.database import find_user_by_feed_token
-                    token_user = find_user_by_feed_token(password)
-                    if token_user and token_user.get('username') == username:
-                        authorized = True
-                else:
-                    # Validate against the install-wide feed token.
-                    from app.infra.database import get_global_feed_token
-                    expected_user = settings.get('feed_auth_username')
-                    expected_token = get_global_feed_token()
-                    if (
-                        expected_user
-                        and expected_token
-                        and username == expected_user
-                        and hmac.compare_digest(str(expected_token), password)
-                    ):
-                        authorized = True
-            except Exception:
-                pass
-        
-        if not authorized:
-            headers = {"WWW-Authenticate": 'Basic realm="Podcast Ad Remover"'}
-            raise HTTPException(status_code=401, detail="Unauthorized", headers=headers)
+    This route does NOT authorise. `/feed/` is covered by
+    `app.web.middleware.feed_auth_middleware`, exactly like `/feeds/` and
+    `/audio/`, so reaching this body means the credential already passed.
 
+    The hand-rolled `Authorization`/`?auth=` check that used to live here was
+    a second, independently maintained gate, and the two had drifted: the
+    middleware treats the credential as an opaque token and ignores any
+    username, while this route additionally demanded
+    `username == feed_auth_username`. A bare token therefore passed the
+    middleware and was then rejected here, and a URL built for one gate was
+    invalid at the other. One gate, in one place.
+    """
     from fastapi.responses import FileResponse, Response
     from app.core.config import settings as app_settings
-    
+
+    settings = get_global_settings()
+
     file_path = os.path.join(app_settings.FEEDS_DIR, "unified.xml")
     if not os.path.exists(file_path):
         # Generate on demand if missing
         from app.core.rss_gen import RSSGenerator
         gen = RSSGenerator()
         gen.generate_unified_feed()
-    
-    # Set no-cache headers
+
     cache_headers = {
         "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0",
         "Pragma": "no-cache",
         "Expires": "0"
     }
 
-    # If auth is enabled, inject credentials into the XML on the fly
-    if is_auth_enabled and authorized:
+    # Forward the caller's own verified credential onto the audio URLs, so a
+    # download is authorised by the same value that authorised the feed.
+    credential = _presented_feed_credential(request)
+    if is_feed_auth_enabled(settings) and credential:
         try:
             with open(file_path, "r", encoding="utf-8") as f:
-                xml_content = f.read()
-            
-            # Inject credentials into enclosure URLs
-            # username and password are available from the Basic Auth block
-            if username and password:
-                # Use token auth: append ?auth=base64(user:pass) to audio URLs
-                import re
-                token = base64.b64encode(f"{username}:{password}".encode()).decode()
-                
-                def inject_auth(match):
-                    url = match.group(2)
-                    separator = "&" if "?" in url else "?"
-                    return f'{match.group(1)}{url}{separator}auth={token}'
-
-                # Find enclosure url="...", capture the prefix and the URL
-                xml_content = re.sub(r'(enclosure\s+url=")(https?://[^"]+)', inject_auth, xml_content)
-
-                
+                xml_content = _inject_enclosure_credential(f.read(), credential)
             return Response(content=xml_content, media_type="application/xml", headers=cache_headers)
         except Exception as e:
             logger.error(f"Error injecting credentials into unified feed: {e}")
-            # Fallback to static file if injection fails
-    
+            # Fallback to the static file if injection fails.
+
     return FileResponse(file_path, media_type="application/xml", headers=cache_headers)
