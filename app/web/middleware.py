@@ -1,87 +1,140 @@
-from fastapi import Request, HTTPException, status
-from fastapi.responses import Response
-import bcrypt
+"""Feed request verification.
+
+Feed URLs are authenticated with a per-user (or, in standalone mode, a global)
+random *feed token*. The token is a bearer credential dedicated to podcast
+clients - it is never the operator's account password, so a leaked feed URL
+does not leak a login.
+
+Two transports are accepted, both carrying the same token:
+
+* ``?auth=<token>`` on the URL (what generated feed URLs use), and
+* HTTP ``Authorization: Basic`` with the token in the *password* field, so
+  podcast clients that already stored Basic credentials keep working.
+
+There is deliberately no fallback to the old password-based credential: that
+path required reading a plaintext password out of ``app_settings``, which is
+exactly what this change removes. Old feed URLs stop working and must be
+regenerated.
+"""
+
 import base64
+import binascii
+import hmac
+
+from fastapi import Request, status
+from fastapi.responses import Response
+
+_UNAUTHORIZED_HEADERS = {'WWW-Authenticate': 'Basic realm="Podcast Feeds"'}
+
+_TRUTHY = {'1', 'true', 'yes', 'on', 't', 'y'}
+
+
+def _unauthorized() -> Response:
+    return Response(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        headers=dict(_UNAUTHORIZED_HEADERS),
+    )
+
+
+def _is_enabled(value) -> bool:
+    """Truthiness for a setting that may be an int, a bool, or a string."""
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value != 0
+    return str(value).strip().lower() in _TRUTHY
+
+
+def _candidate_tokens(request: Request) -> list:
+    """Every string the caller could plausibly have meant as the feed token.
+
+    Each candidate is verified with a constant-time comparison (or a
+    constant-time lookup), so offering more than one costs nothing in secrecy;
+    it only buys transport compatibility.
+    """
+    candidates = []
+
+    def add(value):
+        if isinstance(value, str) and value and value not in candidates:
+            candidates.append(value)
+
+    auth_header = request.headers.get('Authorization') or ''
+    if auth_header.startswith('Basic '):
+        encoded = auth_header[len('Basic '):].strip()
+        decoded = _b64_decode(encoded)
+        if decoded is not None and ':' in decoded:
+            # Basic auth: the token lives in the password field.
+            add(decoded.split(':', 1)[1])
+
+    raw_query_value = request.query_params.get('auth')
+    if raw_query_value:
+        # Current generated URLs carry the bare token.
+        add(raw_query_value)
+        # Tolerate the legacy base64("user:secret") envelope shape, treating
+        # the secret half as a token candidate. No plaintext password is ever
+        # read from the database to satisfy it.
+        decoded = _b64_decode(raw_query_value)
+        if decoded is not None and ':' in decoded:
+            add(decoded.split(':', 1)[1])
+
+    return candidates
+
+
+def _b64_decode(value: str):
+    if not value:
+        return None
+    try:
+        return base64.b64decode(value, validate=True).decode('utf-8')
+    except (binascii.Error, ValueError, UnicodeDecodeError):
+        return None
+
 
 async def feed_auth_middleware(request: Request, call_next):
-    """
-    Middleware to protect /feeds/* and /audio/* routes with HTTP Basic Auth.
-    - If user auth is enabled: uses user credentials
-    - If user auth is disabled: uses global feed credentials
+    """Protect ``/feeds/*`` and ``/audio/*`` with feed-token verification.
+
+    * per-user auth enabled  -> the token must resolve to a user
+    * per-user auth disabled -> the token must equal the global feed token
+
+    Fails closed on every ambiguity, including "feed auth enabled but no token
+    configured".
     """
     path = request.url.path
-    
-    # Only protect feeds and audio routes
+
     if not (path.startswith('/feeds/') or path.startswith('/audio/')):
         return await call_next(request)
-    
-    # Check if feed auth is enabled
+
     from app.web.router import get_global_settings
     settings = get_global_settings()
-    
-    # Determine if we should enforce auth
-    if not settings.get('enable_feed_auth'):
+
+    if not _is_enabled(settings.get('enable_feed_auth')):
         return await call_next(request)
-    
-    # Check for Authorization header
-    auth_header = request.headers.get('Authorization')
-    encoded_credentials = None
-    
-    if auth_header and auth_header.startswith('Basic '):
-        encoded_credentials = auth_header.split(' ')[1]
-    else:
-        # Fallback: Check for ?auth= query parameter
-        encoded_credentials = request.query_params.get('auth')
-    
-    if not encoded_credentials:
-        return Response(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            headers={'WWW-Authenticate': 'Basic realm="Podcast Feeds"'}
-        )
-    
-    # Decode credentials
-    try:
-        decoded_credentials = base64.b64decode(encoded_credentials).decode('utf-8')
-        username, password = decoded_credentials.split(':', 1)
-    except Exception:
-        return Response(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            headers={'WWW-Authenticate': 'Basic realm="Podcast Feeds"'}
-        )
-    
-    # Determine which credentials to check
-    if settings.get('auth_enabled'):
-        # User auth is enabled - check against users table
-        from app.infra.database import get_db_connection
-        with get_db_connection() as conn:
-            user_row = conn.execute("SELECT password_hash FROM users WHERE username = ?", (username,)).fetchone()
-        
-        if not user_row or not bcrypt.checkpw(password.encode('utf-8'), user_row['password_hash'].encode('utf-8')):
-            return Response(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                headers={'WWW-Authenticate': 'Basic realm="Podcast Feeds"'}
-            )
-    else:
-        # User auth is disabled - check against global feed credentials
-        expected_username = settings.get('feed_auth_username')
-        expected_password_hash = settings.get('feed_auth_password')
-        
-        if not expected_username or not expected_password_hash:
-            # Feed auth enabled but not configured - allow access (or maybe block? safe to allow if not configured)
+
+    candidates = _candidate_tokens(request)
+    if not candidates:
+        # Missing, empty, or unparseable credential.
+        return _unauthorized()
+
+    from app.infra.database import find_user_by_feed_token, get_global_feed_token
+
+    if _is_enabled(settings.get('auth_enabled')):
+        for token in candidates:
+            if find_user_by_feed_token(token):
+                return await call_next(request)
+        return _unauthorized()
+
+    expected_token = get_global_feed_token()
+    if not expected_token:
+        # Feed auth is enabled but no global token was ever generated. That is
+        # a misconfiguration of an access-control gate, and the old code failed
+        # OPEN here - serving every feed and audio file to the internet with no
+        # credential at all. Fail closed instead: an operator sees 401s and
+        # fixes the config; nobody sees a silent exposure.
+        return _unauthorized()
+
+    for token in candidates:
+        if hmac.compare_digest(token, expected_token):
             return await call_next(request)
-        
-        if username != expected_username:
-            return Response(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                headers={'WWW-Authenticate': 'Basic realm="Podcast Feeds"'}
-            )
-        
-        # Verify password (plaintext for global feed credentials)
-        if password != expected_password_hash:
-            return Response(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                headers={'WWW-Authenticate': 'Basic realm="Podcast Feeds"'}
-            )
-    
-    # Authentication successful
-    return await call_next(request)
+
+    return _unauthorized()
