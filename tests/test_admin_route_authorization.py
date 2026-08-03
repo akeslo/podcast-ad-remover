@@ -143,11 +143,35 @@ def test_operator_can_still_save_system_settings(client):
 
 
 # --------------------------------------------------------------------------
-# FIX 2 (audit) - no state-changing /admin route may be left unguarded
+# FIX 2 (audit) - no state-changing route may be left unguarded
 # --------------------------------------------------------------------------
+#
+# Widened from "/admin only" to *every* state-changing route on the router.
+# The original scope was the reason five ordinary-user write routes (`/add`,
+# `/episodes/{id}/download`, `/api/episodes/{id}/reprocess`,
+# `/api/episodes/{id}/ignore`, `/subscriptions/{id}/settings`) passed a green
+# authorization audit while completely unguarded: they are the same class of
+# hole, they just do not live under `/admin`. An audit whose scope is a path
+# prefix only ever proves something about that prefix.
 
-def _admin_write_routes():
-    """Every non-safe route under /admin declared by app/web/router.py."""
+#: Routes that must stay reachable by an anonymous, origin-less caller, each
+#: for a stated reason. This list is the audit's only escape hatch - adding to
+#: it is a deliberate, reviewable act, which is the point.
+PUBLIC_WRITE_ROUTES = {
+    # The unauthenticated entry point, by definition. It is guarded instead by
+    # per-IP rate limiting plus constant-time password verification; requiring
+    # an Origin here would break scripted and non-browser logins for no gain,
+    # since login CSRF cannot change any existing state.
+    ("POST", "/login"),
+    # The "let me in" form, shown to people who by construction have no
+    # account and no session. Its only effect is to queue a request an admin
+    # must then approve.
+    ("POST", "/submit-access-request"),
+}
+
+
+def _state_changing_routes():
+    """Every non-safe route declared by app/web/router.py, minus the public ones."""
     from app.web.router import router as web_router
 
     routes = []
@@ -155,18 +179,39 @@ def _admin_write_routes():
         path = getattr(route, "path", "")
         methods = getattr(route, "methods", set()) or set()
         writes = methods - {"GET", "HEAD", "OPTIONS"}
-        if path.startswith("/admin") and writes:
-            routes.append((sorted(writes)[0], path))
+        if not writes:
+            continue
+        method = sorted(writes)[0]
+        if (method, path) in PUBLIC_WRITE_ROUTES:
+            continue
+        routes.append((method, path))
     return sorted(routes)
 
 
 def test_the_audit_actually_found_routes():
     """Guard against the sweep below silently passing on an empty list."""
-    assert len(_admin_write_routes()) >= 10
+    found = _state_changing_routes()
+    assert len(found) >= 20
+    # The sweep must reach past /admin, or it is the old prefix-scoped audit
+    # wearing a new name.
+    assert any(not path.startswith("/admin") for _, path in found)
 
 
-@pytest.mark.parametrize("method,path", _admin_write_routes())
-def test_no_admin_write_route_accepts_an_anonymous_request(client, method, path):
+def test_every_public_write_route_still_exists():
+    """An exemption for a route that no longer exists is a silent hole."""
+    from app.web.router import router as web_router
+
+    declared = {
+        (method, getattr(route, "path", ""))
+        for route in web_router.routes
+        for method in (getattr(route, "methods", set()) or set())
+    }
+    for entry in PUBLIC_WRITE_ROUTES:
+        assert entry in declared, f"stale exemption: {entry}"
+
+
+@pytest.mark.parametrize("method,path", _state_changing_routes())
+def test_no_write_route_accepts_an_anonymous_request(client, method, path):
     """A blanket sweep, so the next route added cannot quietly reopen this."""
     concrete = re.sub(r"\{[^}]+\}", "1", path)
 

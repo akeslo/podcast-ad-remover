@@ -253,6 +253,41 @@ def require_admin_action(request: Request) -> None:
     require_same_origin(request)
 
 
+def require_user_action(request: Request) -> None:
+    """Authorisation for state-changing routes any signed-in user may perform.
+
+    These are ordinary user actions - adding a subscription, downloading or
+    reprocessing an episode, editing a subscription's settings - not
+    administrative ones, so `require_admin` is the wrong gate: it would lock a
+    non-admin user out of the app's normal function in order to close a hole
+    that is not about privilege at all.
+
+    What each half actually buys, per deployment:
+
+    * `auth_enabled = 1` (multi-user): `require_auth` is a real authentication
+      boundary. An anonymous request is rejected with 401 by the dependency
+      itself rather than relying on `auth_middleware` alone, so the route
+      stays guarded even if the middleware's path handling changes. It does
+      *not* distinguish between users - any signed-in account may act on any
+      subscription, because the data model has no per-user ownership.
+    * `auth_enabled = 0` (standalone, the common deployment): `require_auth`
+      is a deliberate no-op - it synthesises a dummy admin because there are
+      no users to authenticate. Making these routes require a real login there
+      would lock the owner out of adding a podcast, which is a worse outcome
+      than the hole being closed. So in standalone mode `require_same_origin`
+      is the entire boundary, exactly as it is for the admin routes: it stops
+      drive-by cross-site posts and blind scripted loops (curl sends no
+      Origin), and it does not pretend to stop anyone who can already reach
+      the UI. That remaining boundary is the IP allowlist in
+      `auth_middleware`.
+
+    In both modes this is a CSRF boundary first; only in multi-user mode is it
+    also an authentication one.
+    """
+    require_auth(request)
+    require_same_origin(request)
+
+
 # --- One-time "your feed URLs changed" upgrade notice ---------------------
 #
 # Feed URLs used to be base64(username:account_password). They are now
@@ -506,7 +541,7 @@ async def change_password_page(request: Request, user: dict = Depends(require_au
         "required": settings['require_password_change'] if settings else False
     })
 
-@router.post("/change-password")
+@router.post("/change-password", dependencies=[Depends(require_same_origin)])
 async def change_password(
     request: Request,
     current_password: str = Form(...),
@@ -959,7 +994,7 @@ async def retry_episode(episode_id: int):
     ep_repo.update_status(episode_id, "pending")
     return RedirectResponse(url="/admin/queue", status_code=303)
 
-@router.post("/api/episodes/{episode_id}/reprocess")
+@router.post("/api/episodes/{episode_id}/reprocess", dependencies=[Depends(require_user_action)])
 async def api_reprocess_episode(episode_id: int, skip_transcription: bool = False):
     import json
     logger.info(f"Reprocess request for {episode_id} with skip_transcription={skip_transcription}")
@@ -981,7 +1016,7 @@ async def api_reprocess_episode(episode_id: int, skip_transcription: bool = Fals
     ep_repo.update_status(episode_id, "pending")
     return {"status": "ok"}
 
-@router.post("/api/episodes/{episode_id}/ignore")
+@router.post("/api/episodes/{episode_id}/ignore", dependencies=[Depends(require_user_action)])
 async def api_ignore_episode(episode_id: int):
     # API version of cancel/delete - soft delete
     from app.core.processor import Processor
@@ -989,7 +1024,7 @@ async def api_ignore_episode(episode_id: int):
     await proc.delete_episode(episode_id)
     return {"status": "ok"}
 
-@router.post("/episodes/{episode_id}/download")
+@router.post("/episodes/{episode_id}/download", dependencies=[Depends(require_user_action)])
 async def manual_download_episode(episode_id: int, request: Request):
     # Update DB to pending
     from app.infra.database import get_db_connection
@@ -1508,7 +1543,7 @@ async def update_global_subscription_settings(
     return RedirectResponse(url="/admin/global-subscription-settings?success=Settings updated", status_code=303)
 
 
-@router.post("/add", response_class=HTMLResponse)
+@router.post("/add", response_class=HTMLResponse, dependencies=[Depends(require_user_action)])
 async def add_subscription(request: Request, background_tasks: BackgroundTasks, feed_url: str = Form(...), initial_count: int = Form(1)):
     try:
         # Check if exists (quick DB check)
@@ -1659,7 +1694,7 @@ async def get_subscription_episodes_api(id: int, limit: int = 20, offset: int = 
         "subscription_slug": sub.slug
     }
 
-@router.post("/subscriptions/{id}/settings")
+@router.post("/subscriptions/{id}/settings", dependencies=[Depends(require_user_action)])
 async def update_settings(
     id: int,
     background_tasks: BackgroundTasks,
