@@ -170,21 +170,56 @@ PUBLIC_WRITE_ROUTES = {
 }
 
 
-def _state_changing_routes():
-    """Every non-safe route declared by app/web/router.py, minus the public ones."""
-    from app.web.router import router as web_router
+def _declared_routes():
+    """(method, mounted path) for every route on the *application*.
 
-    routes = []
-    for route in web_router.routes:
-        path = getattr(route, "path", "")
-        methods = getattr(route, "methods", set()) or set()
-        writes = methods - {"GET", "HEAD", "OPTIONS"}
-        if not writes:
-            continue
-        method = sorted(writes)[0]
-        if (method, path) in PUBLIC_WRITE_ROUTES:
-            continue
-        routes.append((method, path))
+    Deliberately `app.main.app.routes`, not `app.web.router.routes`. Scoping
+    the sweep to one router is the same mistake as scoping it to one path
+    prefix, one level up: `app/api/subscriptions.py` declared eight
+    state-changing routes - including a DELETE that destroys a subscription,
+    all of its episodes and every artifact file on disk - and this audit
+    certified the app as safe for as long as it structurally could not see
+    that file. Sweeping the mounted app means a router added tomorrow is
+    covered the day it is mounted, with no one having to remember this test.
+
+    Paths here are the mounted paths (`/api/...` for the API router), because
+    that is what a caller can actually reach.
+    """
+    from app.main import app as fastapi_app
+
+    def walk(routes, prefix=""):
+        for route in routes:
+            # FastAPI versions differ in how `include_router` is represented:
+            # older ones copy the sub-router's routes onto the app with the
+            # prefix already applied, newer ones keep a wrapper that holds the
+            # original router and its prefix. Handle both, or this sweep goes
+            # quietly back to seeing nothing outside app/web/router.py - which
+            # is the exact failure mode it exists to end.
+            context = getattr(route, "include_context", None)
+            included = getattr(context, "included_router", None)
+            if included is not None:
+                yield from walk(included.routes, prefix + (context.prefix or ""))
+                continue
+            path = prefix + getattr(route, "path", "")
+            for method in (getattr(route, "methods", set()) or set()):
+                yield method, path
+
+    yield from walk(fastapi_app.routes)
+
+
+def _state_changing_routes():
+    """Every non-safe (method, path) on the mounted app, minus the public ones.
+
+    Every write method on a route is returned, not just one: taking
+    `sorted(writes)[0]` meant a route declaring both POST and DELETE was only
+    ever probed on DELETE, and the other method rode along untested.
+    """
+    routes = {
+        (method, path)
+        for method, path in _declared_routes()
+        if method not in ("GET", "HEAD", "OPTIONS")
+        and (method, path) not in PUBLIC_WRITE_ROUTES
+    }
     return sorted(routes)
 
 
@@ -195,17 +230,16 @@ def test_the_audit_actually_found_routes():
     # The sweep must reach past /admin, or it is the old prefix-scoped audit
     # wearing a new name.
     assert any(not path.startswith("/admin") for _, path in found)
+    # ...and past app/web/router.py, or it is the old single-router audit
+    # wearing a new name. The /api router is the one that was invisible.
+    assert any(path.startswith("/api/") for _, path in found), (
+        "the sweep is not seeing the mounted /api router"
+    )
 
 
 def test_every_public_write_route_still_exists():
     """An exemption for a route that no longer exists is a silent hole."""
-    from app.web.router import router as web_router
-
-    declared = {
-        (method, getattr(route, "path", ""))
-        for route in web_router.routes
-        for method in (getattr(route, "methods", set()) or set())
-    }
+    declared = set(_declared_routes())
     for entry in PUBLIC_WRITE_ROUTES:
         assert entry in declared, f"stale exemption: {entry}"
 
@@ -221,6 +255,126 @@ def test_no_write_route_accepts_an_anonymous_request(client, method, path):
         f"{method} {concrete} accepted an anonymous request "
         f"({response.status_code})"
     )
+
+
+# --------------------------------------------------------------------------
+# FIX 3 - the /api router, which no audit could previously see
+# --------------------------------------------------------------------------
+#
+# app/api/subscriptions.py is mounted at /api and declared eight state-changing
+# routes with no guard at all. Proven against a real database in standalone
+# mode: an anonymous, origin-less DELETE /api/subscriptions/1 returned 200 and
+# took the subscription, its episodes and its artifact files with it, while the
+# guarded twin of the same action (POST /add) correctly returned 403.
+
+API_WRITE_ROUTES = [
+    ("POST", "/api/subscriptions"),
+    ("DELETE", "/api/subscriptions/1"),
+    ("DELETE", "/api/episodes/1"),
+    ("POST", "/api/subscriptions/1/check"),
+    ("POST", "/api/episodes/1/process"),
+    ("POST", "/api/episodes/1/cancel"),
+    ("POST", "/api/search"),
+    ("POST", "/api/episodes/1/track-listen"),
+]
+
+
+@pytest.mark.parametrize("method,path", API_WRITE_ROUTES)
+def test_anonymous_request_to_api_router_is_rejected(client, method, path):
+    response = client.request(method, path, follow_redirects=False)
+    assert response.status_code == 403, (
+        f"{method} {path} accepted an anonymous request ({response.status_code})"
+    )
+
+
+@pytest.mark.parametrize("method,path", API_WRITE_ROUTES)
+def test_cross_site_request_to_api_router_is_rejected(client, method, path):
+    response = client.request(
+        method, path, headers=CROSS_ORIGIN, follow_redirects=False
+    )
+    assert response.status_code == 403, response.text
+
+
+ADMIN_PASSWORD = "guard-test-password-123"
+
+
+def _create_admin_user(username, password):
+    from app.web.auth_utils import hash_password
+
+    with get_db_connection() as conn:
+        conn.execute("DELETE FROM users WHERE username = ?", (username,))
+        conn.execute(
+            "INSERT INTO users (username, password_hash, is_admin) VALUES (?, ?, 1)",
+            (username, hash_password(password)),
+        )
+        conn.commit()
+
+
+def _seed_subscription_and_episode():
+    """One real row of each, so the legitimate-path tests hit real handlers."""
+    with get_db_connection() as conn:
+        conn.execute(
+            "INSERT INTO subscriptions (feed_url, title, slug) VALUES (?, ?, ?)",
+            ("http://example.invalid/guard-test.xml", "Guard Test", "guard-test"),
+        )
+        sub_id = conn.execute("SELECT last_insert_rowid() AS i").fetchone()["i"]
+        conn.execute(
+            "INSERT INTO episodes (subscription_id, guid, title, original_url,"
+            " status) VALUES (?, ?, ?, ?, ?)",
+            (
+                sub_id,
+                "guard-test-guid",
+                "Guard Test Episode",
+                "http://example.invalid/guard-test.mp3",
+                "completed",
+            ),
+        )
+        ep_id = conn.execute("SELECT last_insert_rowid() AS i").fetchone()["i"]
+        conn.commit()
+    return sub_id, ep_id
+
+
+@pytest.mark.parametrize("auth_enabled", [0, 1])
+def test_same_origin_api_calls_still_work_in_both_auth_modes(client, auth_enabled):
+    """The gate must not break ordinary use - the half that actually matters.
+
+    Run in both deployments. With auth_enabled = 0 `require_auth` is a no-op
+    and the origin check is the whole boundary; with auth_enabled = 1 it is a
+    real one, and the TestClient session fixture is what carries the login.
+    """
+    _set_settings(auth_enabled=auth_enabled)
+    if auth_enabled:
+        _create_admin_user("guard-test-admin", ADMIN_PASSWORD)
+        login = client.post(
+            "/login",
+            data={"username": "guard-test-admin", "password": ADMIN_PASSWORD},
+            headers=SAME_ORIGIN,
+            follow_redirects=False,
+        )
+        assert login.status_code in (302, 303), login.text
+    sub_id, ep_id = _seed_subscription_and_episode()
+
+    ok = {200, 303}
+
+    # Ordinary user actions.
+    for method, path in (
+        ("POST", f"/api/subscriptions/{sub_id}/check"),
+        ("POST", f"/api/episodes/{ep_id}/process"),
+        ("POST", f"/api/episodes/{ep_id}/track-listen"),
+    ):
+        response = client.request(method, path, headers=SAME_ORIGIN)
+        assert response.status_code in ok, (
+            f"{method} {path} -> {response.status_code}: {response.text}"
+        )
+
+    # The admin action: destroys the subscription, its episodes and its files.
+    response = client.delete(f"/api/subscriptions/{sub_id}", headers=SAME_ORIGIN)
+    assert response.status_code in ok, response.text
+    with get_db_connection() as conn:
+        remaining = conn.execute(
+            "SELECT COUNT(*) AS n FROM subscriptions WHERE id = ?", (sub_id,)
+        ).fetchone()["n"]
+    assert remaining == 0, "the legitimate delete no longer works"
 
 
 # --------------------------------------------------------------------------
