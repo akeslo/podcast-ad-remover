@@ -30,6 +30,14 @@ def generate_secure_password(length: int = 16) -> str:
     secrets.SystemRandom().shuffle(password)
     return ''.join(password)
 
+def generate_feed_token() -> str:
+    """Generate a random bearer token for RSS feed access.
+
+    URL-safe is a hard requirement: the token is carried as a query-string
+    parameter in feed URLs handed to podcast clients.
+    """
+    return secrets.token_urlsafe(32)
+
 def get_client_ip(request) -> str:
     """Extract client IP from request, considering proxies."""
     # Check for Cloudflare headers first

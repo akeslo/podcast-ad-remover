@@ -1,6 +1,11 @@
+import hmac
 import sqlite3
 from contextlib import contextmanager
+from typing import Optional
+
 from app.core.config import settings
+# auth_utils imports no app modules, so this does not create an import cycle.
+from app.web.auth_utils import generate_feed_token
 
 def init_db():
     """Initialize the database with the schema."""
@@ -74,7 +79,11 @@ def init_db():
         enable_feed_auth INTEGER DEFAULT 0,
         feed_auth_username TEXT,
         feed_auth_password TEXT,
-        
+        -- Standalone/global feed bearer token. Replaces reliance on
+        -- feed_auth_password for feed URLs. Stored retrievably on purpose:
+        -- see the note on users.feed_token below.
+        feed_auth_token TEXT,
+
         auth_enabled INTEGER DEFAULT 0,
         require_password_change INTEGER DEFAULT 0,
         initial_password TEXT,
@@ -107,7 +116,21 @@ Transcript Context: {transcript_context}""",))
         password_hash TEXT NOT NULL,
         is_admin INTEGER DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        last_login TIMESTAMP
+        last_login TIMESTAMP,
+        -- Per-user random bearer credential for read-only RSS feed access.
+        --
+        -- DELIBERATELY STORED RETRIEVABLE (plaintext), NOT HASHED. Do not
+        -- "improve" this into a hash: the dashboard has to re-display the
+        -- full feed URL, containing this token, at any time. Hashing it makes
+        -- the URL unrecoverable after creation and breaks feed display.
+        --
+        -- The security win here is NOT storage secrecy. It is that the feed
+        -- credential is decoupled from the account password (which previously
+        -- leaked into podcast-client logs, proxies, and browser history via
+        -- the base64 ?auth= parameter) and that it is revocable per user
+        -- without touching the login password. This is how tokenized podcast
+        -- feeds normally work.
+        feed_token TEXT
     )
     """)
     
@@ -232,14 +255,32 @@ Transcript Context: {transcript_context}""",))
         "ALTER TABLE app_settings ADD COLUMN default_manual_retention_days INTEGER DEFAULT 14",
         "ALTER TABLE app_settings ADD COLUMN default_custom_instructions TEXT",
         "ALTER TABLE episodes ADD COLUMN listen_count INTEGER DEFAULT 0",
-        "ALTER TABLE app_settings ADD COLUMN gemini_api_keys TEXT"
+        "ALTER TABLE app_settings ADD COLUMN gemini_api_keys TEXT",
+
+        # Feed tokens: replace the password-derived ?auth= feed credential.
+        # feed_auth_password is intentionally NOT dropped here - removing it
+        # is a separate change.
+        "ALTER TABLE users ADD COLUMN feed_token TEXT",
+        "ALTER TABLE app_settings ADD COLUMN feed_auth_token TEXT"
     ]
-    
+
     for sql in migrations:
         try:
             cursor.execute(sql)
         except sqlite3.OperationalError:
             pass # Column likely exists
+
+    # Backfill: every existing user must end up with a working feed token,
+    # otherwise their feeds break the moment password-based auth is removed.
+    # Generated one row at a time so each user gets a distinct token.
+    cursor.execute(
+        "SELECT id FROM users WHERE feed_token IS NULL OR feed_token = ''"
+    )
+    for (user_id,) in cursor.fetchall():
+        cursor.execute(
+            "UPDATE users SET feed_token = ? WHERE id = ?",
+            (generate_feed_token(), user_id),
+        )
 
     conn.commit()
     conn.close()
@@ -257,3 +298,110 @@ def get_db_connection():
         yield conn
     finally:
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Feed tokens
+#
+# These are bearer credentials for read-only RSS feed access. They are stored
+# retrievably (not hashed) on purpose - see the comment on users.feed_token in
+# init_db(). Treat them like API keys: never log them.
+# ---------------------------------------------------------------------------
+
+def get_feed_token(user_id: int) -> Optional[str]:
+    """Return the user's feed token, or None if they have none."""
+    with get_db_connection() as conn:
+        row = conn.execute(
+            "SELECT feed_token FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+    if not row:
+        return None
+    token = row["feed_token"]
+    return token if token else None
+
+
+def ensure_feed_token(user_id: int) -> str:
+    """Return the user's feed token, generating and persisting one if absent."""
+    existing = get_feed_token(user_id)
+    if existing:
+        return existing
+    token = generate_feed_token()
+    with get_db_connection() as conn:
+        conn.execute(
+            "UPDATE users SET feed_token = ? WHERE id = ?", (token, user_id)
+        )
+        conn.commit()
+    return token
+
+
+def rotate_feed_token(user_id: int) -> str:
+    """Generate a new feed token for the user, persist it, and return it.
+
+    This is the revocation path: the previous token stops resolving
+    immediately, and no other credential (including the account password) is
+    affected.
+    """
+    token = generate_feed_token()
+    with get_db_connection() as conn:
+        conn.execute(
+            "UPDATE users SET feed_token = ? WHERE id = ?", (token, user_id)
+        )
+        conn.commit()
+    return token
+
+
+def find_user_by_feed_token(token: Optional[str]) -> Optional[dict]:
+    """Resolve a feed token to a user row, or None.
+
+    Two things this deliberately does NOT do:
+
+    1. It never matches on an empty or missing token. A NULL/empty stored
+       column must not be authenticated by a NULL/empty presented token, so
+       both sides are rejected up front and empty stored tokens are excluded
+       from the candidate set by the SQL.
+    2. It never compares tokens with `==` in SQL or in Python. Candidate rows
+       are compared with `hmac.compare_digest` so a match cannot be recovered
+       byte-by-byte from response timing.
+    """
+    if not token or not isinstance(token, str):
+        return None
+
+    with get_db_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM users "
+            "WHERE feed_token IS NOT NULL AND feed_token != ''"
+        ).fetchall()
+
+    match = None
+    for row in rows:
+        # Compare every candidate; do not short-circuit on the first hit.
+        if hmac.compare_digest(str(row["feed_token"]), token):
+            match = row
+    return dict(match) if match is not None else None
+
+
+def get_global_feed_token() -> Optional[str]:
+    """Return the standalone/global feed token, or None if unset."""
+    with get_db_connection() as conn:
+        row = conn.execute(
+            "SELECT feed_auth_token FROM app_settings WHERE id = 1"
+        ).fetchone()
+    if not row:
+        return None
+    token = row["feed_auth_token"]
+    return token if token else None
+
+
+def ensure_global_feed_token() -> str:
+    """Return the global feed token, generating and persisting one if absent."""
+    existing = get_global_feed_token()
+    if existing:
+        return existing
+    token = generate_feed_token()
+    with get_db_connection() as conn:
+        conn.execute("INSERT OR IGNORE INTO app_settings (id) VALUES (1)")
+        conn.execute(
+            "UPDATE app_settings SET feed_auth_token = ? WHERE id = 1", (token,)
+        )
+        conn.commit()
+    return token
