@@ -83,26 +83,43 @@ async def not_found_handler(request: Request, exc: Exception) -> HTMLResponse:
 
 
 async def forbidden_handler(request: Request, exc: Exception) -> HTMLResponse:
-    """Handle 403 Forbidden errors."""
-    logger.warning(
-        f"403 Forbidden: {request.url.path} from {request.client.host if request.client else 'unknown'}"
+    """Handle 403 Forbidden errors.
+
+    The reason is shown to the caller, unlike every other handler in this
+    module. That is a deliberate exception, not an oversight: the only three
+    403s this app raises are "Access denied from your IP address", "Admin
+    privileges required" and the same-origin rejection. None names a secret,
+    a path or a version, and all three are policy statements the caller can
+    act on. Suppressing them turned a misconfigured Public Application URL
+    into a generic "Access Denied" on every admin form with no stated cause,
+    which is the failure this wording exists to prevent. Anything raised with
+    a non-string detail still falls back to the generic message.
+    """
+    detail = getattr(exc, "detail", None)
+    message = detail if isinstance(detail, str) and detail.strip() else (
+        "You don't have permission to access this resource."
     )
-    
+
+    logger.warning(
+        f"403 Forbidden: {request.url.path} from "
+        f"{request.client.host if request.client else 'unknown'} - {message}"
+    )
+
     accept_header = request.headers.get("accept", "")
-    
+
     if "application/json" in accept_header:
         return JSONResponse(
             status_code=status.HTTP_403_FORBIDDEN,
             content={
                 "error": "Forbidden",
-                "message": "You don't have permission to access this resource."
+                "message": message
             }
         )
-    
+
     return templates.TemplateResponse(request, "error.html", {
             "status_code": 403,
             "title": "Access Denied",
-            "message": "You don't have permission to access this resource."
+            "message": message
         },
         status_code=status.HTTP_403_FORBIDDEN
     )

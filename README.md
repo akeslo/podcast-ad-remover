@@ -65,6 +65,12 @@ docker run -d \
     ```
 4.  Access the web interface at `http://localhost:8000`.
 5.  Navigate to **Settings > AI Models** to configure your API key.
+6.  If you are putting this behind a reverse proxy, set **Settings > System >
+    Public Application URL** to the exact URL you use in the browser (scheme,
+    host and port). Admin actions are same-origin checked against that value and
+    the incoming `Host` header, so if it is wrong *and* your proxy rewrites
+    `Host`, every admin save returns 403 - including the save that fixes it. See
+    [Deployment](Documentation/Deployment.md#behind-a-reverse-proxy-read-this-before-you-proxy-it).
 
 ### Getting a Free Gemini API Key
 

@@ -14,6 +14,47 @@ logger = logging.getLogger(__name__)
 # Session key
 SESSION_USER_KEY = "user_id"
 
+# Methods the same-origin check in `require_admin_action` actually guards.
+UNSAFE_METHODS = ("POST", "PUT", "PATCH", "DELETE")
+
+
+def _origin_diagnostics(request: Request) -> str:
+    """Describe both sides of the same-origin comparison, for the log only.
+
+    Every admin route is guarded by `require_admin_action`, which rejects a
+    state-changing request whose `Origin` (or `Referer`) host is neither the
+    `Host` header nor the operator-configured Public Application URL. Behind a
+    reverse proxy that rewrites `Host` to the container name, or with the
+    Public Application URL left pointing at the auto-detected LAN address,
+    every admin form POST then fails with a generic 403 and nothing anywhere
+    says why. This produces the one log line that names the received value and
+    the expected one.
+
+    Only netlocs are logged, never a full URL: a `Referer` can carry a feed
+    token in its path, and tokens must not reach the log.
+    """
+    from urllib.parse import urlsplit
+
+    def _netloc(value):
+        if not value:
+            return None
+        value = value.strip()
+        return urlsplit(value).netloc.lower() or value.lower()
+
+    try:
+        from app.core.utils import get_global_settings
+        configured = get_global_settings().get("app_external_url")
+    except Exception:  # pragma: no cover - settings unavailable
+        configured = None
+
+    return (
+        f"origin={_netloc(request.headers.get('origin'))!r} "
+        f"referer={_netloc(request.headers.get('referer'))!r} "
+        f"host={_netloc(request.headers.get('host'))!r} "
+        f"x-forwarded-host={_netloc(request.headers.get('x-forwarded-host'))!r} "
+        f"public-application-url={_netloc(configured)!r}"
+    )
+
 def get_current_user(request: Request) -> Optional[User]:
     """Get the currently logged-in user from session."""
     user_id = request.session.get(SESSION_USER_KEY)
@@ -148,8 +189,23 @@ async def auth_middleware(request: Request, call_next):
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Admin privileges required"
             )
-    
-    return await call_next(request)
+
+    response = await call_next(request)
+
+    # A 403 on a state-changing request is, in practice, almost always the
+    # same-origin check in `require_admin_action`. The response body is
+    # deliberately generic, so without this the operator sees "Access Denied"
+    # on every admin form and has nothing to debug from.
+    if response.status_code == status.HTTP_403_FORBIDDEN and request.method in UNSAFE_METHODS:
+        logger.warning(
+            "AUTH - 403 on %s %s. Likely the admin same-origin check: %s. "
+            "Fix by setting Admin > System > 'Public Application URL' to the exact "
+            "URL the browser uses (scheme, host and port), or by making the reverse "
+            "proxy forward the public Host header to this container.",
+            request.method, path, _origin_diagnostics(request),
+        )
+
+    return response
 
 def log_login_attempt(username: str, ip_address: str, success: bool, user_agent: str):
     """Log a login attempt to the database."""

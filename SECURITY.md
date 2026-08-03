@@ -121,7 +121,12 @@ ENVIRONMENT=production  # or "development"
 ### Attack Prevention
 - ✅ **XSS:** Content-Security-Policy header
 - ✅ **Clickjacking:** X-Frame-Options header
-- ✅ **CSRF:** SameSite cookie attribute
+- ✅ **CSRF:** SameSite cookie attribute, plus a same-origin check on every
+  state-changing admin request (`Origin`/`Referer` must match `Host` or the
+  configured Public Application URL; `X-Forwarded-Host` is not trusted). Behind
+  a reverse proxy this needs configuration - see
+  [Deployment](Documentation/Deployment.md#behind-a-reverse-proxy-read-this-before-you-proxy-it)
+  or every admin POST will 403.
 - ✅ **Brute Force:** Login rate limiting
 - ✅ **MIME Sniffing:** X-Content-Type-Options header
 - ✅ **Protocol Downgrade:** HSTS header
