@@ -86,7 +86,10 @@ def init_db():
 
         auth_enabled INTEGER DEFAULT 0,
         require_password_change INTEGER DEFAULT 0,
-        initial_password TEXT,
+        -- NOTE: `initial_password` is deliberately absent. It used to hold the
+        -- generated admin password in PLAINTEXT and the unauthenticated /login
+        -- page rendered it. The write and the read are gone; the column and any
+        -- value left in it are removed on upgrade below. Do not re-add it.
         ip_allowlist TEXT,
         
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -232,7 +235,9 @@ Transcript Context: {transcript_context}""",))
         "ALTER TABLE app_settings ADD COLUMN feed_auth_password TEXT",
         "ALTER TABLE app_settings ADD COLUMN auth_enabled INTEGER DEFAULT 0",
         "ALTER TABLE app_settings ADD COLUMN require_password_change INTEGER DEFAULT 0",
-        "ALTER TABLE app_settings ADD COLUMN initial_password TEXT",
+        # `ALTER TABLE app_settings ADD COLUMN initial_password TEXT` used to
+        # live here. Removed: the column stored a plaintext admin password and
+        # is now purged below. Re-adding it would recreate it on every upgrade.
         "ALTER TABLE app_settings ADD COLUMN ip_allowlist TEXT",
         "ALTER TABLE subscriptions ADD COLUMN description TEXT",
         "ALTER TABLE episodes ADD COLUMN ai_summary TEXT",
@@ -269,6 +274,45 @@ Transcript Context: {transcript_context}""",))
             cursor.execute(sql)
         except sqlite3.OperationalError:
             pass # Column likely exists
+
+    # Purge the plaintext admin password left behind by older installs.
+    #
+    # `app_settings.initial_password` stored the generated admin password in
+    # clear text, and the /login page - which is exempt from auth - rendered
+    # it. Both code paths are gone, but removing the code does not remove the
+    # data: an install upgraded from before the fix still holds a live
+    # password in that column. This migration is the only code guaranteed to
+    # run on upgrade, so the destruction happens here.
+    #
+    # Two steps, in this order, because they can fail independently:
+    #   1. Overwrite the value unconditionally. This is the step that actually
+    #      destroys the secret and it must not depend on the SQLite version.
+    #   2. Drop the column, so the secret cannot be re-populated by anything
+    #      that still knows the name. DROP COLUMN needs SQLite >= 3.35, and it
+    #      also refuses when the column is referenced by an index, view, or
+    #      trigger - so it is attempted, not assumed. If it does not happen the
+    #      column survives cleared, which is the safe outcome; startup must
+    #      never crash over cosmetics.
+    #
+    # Both installs therefore exist in the wild - column present-but-empty and
+    # column absent - and every read here is guarded by a table_info check
+    # rather than by an assumption about which one this is.
+    settings_columns = {
+        row[1] for row in cursor.execute("PRAGMA table_info(app_settings)")
+    }
+    if "initial_password" in settings_columns:
+        # Unconditional: no WHERE, no "only if non-empty". Cheap, and it cannot
+        # be fooled by a value this code failed to anticipate.
+        cursor.execute("UPDATE app_settings SET initial_password = NULL")
+        if sqlite3.sqlite_version_info >= (3, 35, 0):
+            try:
+                cursor.execute(
+                    "ALTER TABLE app_settings DROP COLUMN initial_password"
+                )
+            except sqlite3.OperationalError:
+                # Older/odd SQLite builds, or the column is referenced by
+                # something. Already cleared above; leave it.
+                pass
 
     # Backfill: every existing user must end up with a working feed token,
     # otherwise their feeds break the moment password-based auth is removed.
