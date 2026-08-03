@@ -65,13 +65,16 @@ async def delete_subscription(id: int):
             
         # 2. Delete subscription-level folders/files
         
-        # Audio directory (Subscription folder)
-        dir_path = os.path.join(settings.AUDIO_DIR, sub.slug)
-        if os.path.exists(dir_path):
-            try:
-                shutil.rmtree(dir_path)
-            except Exception as e:
-                print(f"Error deleting directory {dir_path}: {e}")
+        # Subscription folder under the podcasts tree (settings.get_episode_dir's
+        # parent). AUDIO_DIR is deprecated and is not where episode artifacts live,
+        # so removing it left the real per-subscription directory orphaned on disk.
+        for base_dir in (settings.PODCASTS_DIR, settings.AUDIO_DIR):
+            dir_path = os.path.join(base_dir, sub.slug)
+            if os.path.exists(dir_path):
+                try:
+                    shutil.rmtree(dir_path)
+                except Exception as e:
+                    print(f"Error deleting directory {dir_path}: {e}")
         
         # Feed file
         feed_path = os.path.join(settings.FEEDS_DIR, f"{sub.slug}.xml")
