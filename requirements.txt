@@ -11,6 +11,6 @@ feedparser>=6.0.10
 pydantic-settings>=2.1.0
 aiofiles>=23.2.0
 
-piper-tts==1.2.0
+piper-tts==1.2.0; sys_platform == "linux"
 bcrypt
 itsdangerous
