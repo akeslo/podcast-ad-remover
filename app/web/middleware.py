@@ -82,6 +82,23 @@ def _candidate_tokens(request: Request) -> list:
     return candidates
 
 
+def _tokens_equal(presented, expected) -> bool:
+    """Constant-time equality for two token strings.
+
+    ``hmac.compare_digest`` raises ``TypeError`` when either str argument
+    contains a non-ASCII character, which turned a bogus credential into an
+    unauthenticated 500 with a stack trace. Comparing the UTF-8 encodings
+    instead keeps the comparison constant-time (bytes are always accepted) and
+    turns every bad credential into a plain, quiet mismatch.
+    """
+    if not isinstance(presented, str) or not isinstance(expected, str):
+        return False
+    try:
+        return hmac.compare_digest(presented.encode('utf-8'), expected.encode('utf-8'))
+    except (UnicodeEncodeError, TypeError):
+        return False
+
+
 def _b64_decode(value: str):
     if not value:
         return None
@@ -91,22 +108,43 @@ def _b64_decode(value: str):
         return None
 
 
+#: Every prefix that serves feed or audio content. ``/feed/`` is included so
+#: the unified feed (``/feed/unified``, ``/feed/unified.xml``) and any future
+#: route under it are gated by this middleware rather than by a hand-rolled
+#: check inside the route - two independently maintained gates had already
+#: drifted apart on which transports they accept.
+_PROTECTED_PREFIXES = ('/feeds/', '/audio/', '/feed/')
+
+
 async def feed_auth_middleware(request: Request, call_next):
-    """Protect ``/feeds/*`` and ``/audio/*`` with feed-token verification.
+    """Protect ``/feeds/*``, ``/feed/*`` and ``/audio/*`` with feed-token
+    verification.
 
     * per-user auth enabled  -> the token must resolve to a user
     * per-user auth disabled -> the token must equal the global feed token
 
     Fails closed on every ambiguity, including "feed auth enabled but no token
-    configured".
+    configured" and "the settings row could not be read at all".
     """
     path = request.url.path
 
-    if not (path.startswith('/feeds/') or path.startswith('/audio/')):
+    if not any(path.startswith(prefix) for prefix in _PROTECTED_PREFIXES):
         return await call_next(request)
 
     from app.web.router import get_global_settings
-    settings = get_global_settings()
+
+    # `get_global_settings()` returns {} both when the settings row is missing
+    # and when the read blew up. An empty mapping therefore means "unknown",
+    # not "auth is off" - resolving `.get('enable_feed_auth')` to None on it
+    # would disable the gate on exactly the failure it should hold shut for.
+    try:
+        settings = get_global_settings()
+    except Exception:
+        settings = None
+
+    if not isinstance(settings, dict) or 'enable_feed_auth' not in settings:
+        # Settings unreadable: treat as enabled-and-unconfigured and deny.
+        return _unauthorized()
 
     if not _is_enabled(settings.get('enable_feed_auth')):
         return await call_next(request)
@@ -134,7 +172,7 @@ async def feed_auth_middleware(request: Request, call_next):
         return _unauthorized()
 
     for token in candidates:
-        if hmac.compare_digest(token, expected_token):
+        if _tokens_equal(token, expected_token):
             return await call_next(request)
 
     return _unauthorized()

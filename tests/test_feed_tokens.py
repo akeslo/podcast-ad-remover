@@ -151,3 +151,20 @@ def test_global_feed_token_ensure_and_get():
     assert token
     assert get_global_feed_token() == token
     assert ensure_global_feed_token() == token
+
+
+def test_find_user_by_feed_token_rejects_non_ascii_without_raising(user_id):
+    """`hmac.compare_digest` raises TypeError on non-ASCII str arguments; the
+    per-user lookup is reachable with an attacker-controlled token, so this
+    used to be a free unauthenticated 500."""
+    ensure_feed_token(user_id)
+    assert find_user_by_feed_token("café") is None
+    assert find_user_by_feed_token("☃" * 40) is None
+
+
+def test_find_user_by_feed_token_does_not_return_the_password_hash(user_id):
+    ensure_feed_token(user_id)
+    found = find_user_by_feed_token(get_feed_token(user_id))
+    assert found is not None
+    assert "password_hash" not in found
+    assert set(found) == {"id", "username", "feed_token"}

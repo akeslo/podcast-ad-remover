@@ -201,3 +201,102 @@ def test_end_to_end_unauthenticated_feed_request_401s(client, feed_auth):
 ])
 def test_is_enabled(value, expected):
     assert mw._is_enabled(value) is expected
+
+
+# --- non-ASCII credentials must 401, never 500 --------------------------------
+
+def test_non_ascii_query_token_is_rejected_cleanly(feed_auth):
+    """`hmac.compare_digest` raises TypeError on non-ASCII str arguments.
+
+    Before the fix this raised out of the middleware and became an
+    unauthenticated 500 with a stack trace.
+    """
+    feed_auth()
+    assert call_middleware(query="auth=caf%C3%A9").status_code == 401
+
+
+def test_non_ascii_basic_password_is_rejected_cleanly(feed_auth):
+    feed_auth()
+    assert call_middleware(headers=basic("feeds", "café")).status_code == 401
+
+
+def test_non_ascii_token_is_rejected_cleanly_in_per_user_mode(feed_auth):
+    feed_auth(auth_enabled=True)
+    assert call_middleware(query="auth=caf%C3%A9").status_code == 401
+
+
+def test_end_to_end_non_ascii_token_401s(client, feed_auth):
+    feed_auth()
+    assert client.get(FEED_PATH + "?auth=caf%C3%A9").status_code == 401
+
+
+def test_tokens_equal_handles_non_ascii():
+    assert mw._tokens_equal("café", "café") is True
+    assert mw._tokens_equal("café", "cafe") is False
+    assert mw._tokens_equal("café", None) is False
+    assert mw._tokens_equal(None, "x") is False
+
+
+# --- unreadable settings must fail closed -------------------------------------
+
+def _stub_settings(monkeypatch, value):
+    import app.web.router as router
+    if isinstance(value, Exception):
+        def boom():
+            raise value
+        monkeypatch.setattr(router, "get_global_settings", boom)
+    else:
+        monkeypatch.setattr(router, "get_global_settings", lambda: value)
+
+
+def test_empty_settings_mapping_fails_closed(monkeypatch):
+    """`get_global_settings()` returns {} when the row is missing or the read
+    failed. That is 'unknown', not 'auth is off'."""
+    _stub_settings(monkeypatch, {})
+    assert call_middleware().status_code == 401
+    assert call_middleware(query="auth=" + GLOBAL_TOKEN).status_code == 401
+
+
+def test_settings_without_the_flag_fails_closed(monkeypatch):
+    _stub_settings(monkeypatch, {"auth_enabled": 0})
+    assert call_middleware().status_code == 401
+
+
+def test_settings_read_raising_fails_closed(monkeypatch):
+    _stub_settings(monkeypatch, RuntimeError("database is locked"))
+    assert call_middleware().status_code == 401
+
+
+def test_non_mapping_settings_fails_closed(monkeypatch):
+    _stub_settings(monkeypatch, None)
+    assert call_middleware().status_code == 401
+
+
+# --- /feed/* is gated by the same middleware ----------------------------------
+
+@pytest.mark.parametrize("path", ["/feed/unified", "/feed/unified.xml", "/feed/anything-new"])
+def test_unified_feed_paths_are_gated(feed_auth, path):
+    feed_auth()
+    assert call_middleware(path=path).status_code == 401
+    assert call_middleware(path=path, query="auth=wrong").status_code == 401
+    assert call_middleware(path=path, query="auth=" + GLOBAL_TOKEN) is ALLOWED
+
+
+def test_unified_feed_accepts_the_same_credential_forms_as_feeds(feed_auth):
+    feed_auth()
+    for path in (FEED_PATH, "/feed/unified.xml"):
+        assert call_middleware(path=path, query="auth=" + GLOBAL_TOKEN) is ALLOWED
+        assert call_middleware(path=path, headers=basic("feeds", GLOBAL_TOKEN)) is ALLOWED
+        envelope = base64.b64encode(f"feeds:{GLOBAL_TOKEN}".encode()).decode()
+        assert call_middleware(path=path, query="auth=" + envelope) is ALLOWED
+
+
+def test_feed_prefix_does_not_swallow_unrelated_paths(feed_auth):
+    feed_auth()
+    assert call_middleware(path="/feedback") is ALLOWED
+    assert call_middleware(path="/feed") is ALLOWED
+
+
+def test_unified_feed_not_gated_when_feed_auth_disabled(feed_auth):
+    feed_auth(enable_feed_auth=False)
+    assert call_middleware(path="/feed/unified.xml") is ALLOWED

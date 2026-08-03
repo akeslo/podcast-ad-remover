@@ -12,8 +12,77 @@ from app.core.processor import Processor
 from logging.handlers import RotatingFileHandler
 import os
 
+import re
+
 log_formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 log_file = os.path.join(settings.DATA_DIR, "app.log")
+
+# ---------------------------------------------------------------------------
+# Credential redaction for the log stream.
+#
+# Feed URLs carry a live bearer credential in the `auth` query parameter, and
+# uvicorn's access logger writes the full request line to app.log. Without this
+# filter every feed poll and every audio fetch persists a working feed token to
+# disk (and to stdout, and to whatever ships stdout onward), which defeats the
+# point of having a revocable token in the first place.
+# ---------------------------------------------------------------------------
+
+REDACTED = "[REDACTED]"
+
+# `auth=<value>` in a query string, terminated by & # whitespace or a quote.
+_AUTH_QUERY_RE = re.compile(r"(\bauth=)[^&\s\"'#]*", re.IGNORECASE)
+# `Authorization: Basic <value>` / `Bearer <value>`, in header or dict form.
+_AUTH_HEADER_RE = re.compile(
+    r"(\bauthorization\b[\"']?\s*[:=]\s*[\"']?\s*(?:basic|bearer|digest)\s+)[^\s\"',}]+",
+    re.IGNORECASE,
+)
+
+
+def redact_credentials(text: str) -> str:
+    """Strip feed tokens and Authorization credentials out of a log string."""
+    if not isinstance(text, str) or not text:
+        return text
+    redacted = _AUTH_QUERY_RE.sub(r"\g<1>" + REDACTED, text)
+    redacted = _AUTH_HEADER_RE.sub(r"\g<1>" + REDACTED, redacted)
+    return redacted
+
+
+def _redact_arg(value):
+    return redact_credentials(value) if isinstance(value, str) else value
+
+
+class CredentialRedactingFilter(logging.Filter):
+    """Redact credentials from every record before a handler emits it.
+
+    Two robustness rules, in this order of priority:
+
+    1. A malformed record must not crash logging - hence the broad except.
+    2. A redaction failure must not silently swallow the line. The record is
+       still emitted, with its (potentially unsafe) payload replaced by a
+       marker so the event remains visible without leaking the credential.
+    """
+
+    def filter(self, record):
+        try:
+            if isinstance(record.msg, str):
+                record.msg = redact_credentials(record.msg)
+            args = record.args
+            if isinstance(args, tuple):
+                record.args = tuple(_redact_arg(a) for a in args)
+            elif isinstance(args, dict):
+                record.args = {k: _redact_arg(v) for k, v in args.items()}
+            elif isinstance(args, str):
+                record.args = redact_credentials(args)
+        except Exception:
+            try:
+                record.msg = "[log line dropped: credential redaction failed]"
+                record.args = None
+            except Exception:
+                pass
+        return True
+
+
+_redaction_filter = CredentialRedactingFilter()
 
 file_handler = RotatingFileHandler(
     log_file,
@@ -21,9 +90,11 @@ file_handler = RotatingFileHandler(
     backupCount=settings.LOG_BACKUP_COUNT
 )
 file_handler.setFormatter(log_formatter)
+file_handler.addFilter(_redaction_filter)
 
 stream_handler = logging.StreamHandler()
 stream_handler.setFormatter(log_formatter)
+stream_handler.addFilter(_redaction_filter)
 
 # Root logger configuration
 root_logger = logging.getLogger()

@@ -361,21 +361,34 @@ def find_user_by_feed_token(token: Optional[str]) -> Optional[dict]:
        from the candidate set by the SQL.
     2. It never compares tokens with `==` in SQL or in Python. Candidate rows
        are compared with `hmac.compare_digest` so a match cannot be recovered
-       byte-by-byte from response timing.
+       byte-by-byte from response timing. The comparison is done on the UTF-8
+       encodings: `compare_digest` raises TypeError on str arguments holding
+       non-ASCII characters, which let a junk credential turn an
+       unauthenticated request into a 500 instead of a 401.
+
+    The select is deliberately narrow. It used to be `SELECT *`, which handed
+    every caller the row's `password_hash` for no reason; callers need only the
+    identity fields.
     """
     if not token or not isinstance(token, str):
         return None
 
+    try:
+        presented = token.encode('utf-8')
+    except UnicodeEncodeError:
+        return None
+
     with get_db_connection() as conn:
         rows = conn.execute(
-            "SELECT * FROM users "
+            "SELECT id, username, feed_token FROM users "
             "WHERE feed_token IS NOT NULL AND feed_token != ''"
         ).fetchall()
 
     match = None
     for row in rows:
         # Compare every candidate; do not short-circuit on the first hit.
-        if hmac.compare_digest(str(row["feed_token"]), token):
+        stored = str(row["feed_token"]).encode('utf-8', 'surrogatepass')
+        if hmac.compare_digest(stored, presented):
             match = row
     return dict(match) if match is not None else None
 
