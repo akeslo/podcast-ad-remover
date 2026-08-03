@@ -185,6 +185,24 @@
                 style="padding: 0 16px; height: 24px; line-height: 24px;">Podcast Addict</a>
         </div>
     </div>
+    {% if settings.enable_feed_auth %}
+    <div class="mt-4 pt-4 border-t border-white/[0.08] flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+        <p class="text-xs text-text-muted">Feed links carry a private feed token, not your password. Rotating it
+            immediately revokes every feed URL you have shared or added to a podcast app.</p>
+        <form method="post" action="/feed-token/rotate"
+            onsubmit="return confirm('Rotate your feed token? Every existing feed URL will stop working and you will need to re-add your feeds in your podcast app.')">
+            <button type="submit" class="badge-soft whitespace-nowrap"
+                style="padding: 0 16px; height: 24px; line-height: 24px;">Rotate Feed Token</button>
+        </form>
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
+{% if flash and flash.feed_token_rotated %}
+<div class="alert-success mb-6">
+    <p class="font-medium">Feed token rotated. Your old feed URLs no longer work &mdash; re-add the links above in your
+        podcast app.</p>
 </div>
 {% endif %}
 

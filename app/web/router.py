@@ -10,6 +10,7 @@ from app.web.rate_limiter import login_rate_limiter, check_rate_limit
 from app.infra.database import get_db_connection
 from datetime import datetime
 import os
+import hmac
 import logging
 
 logger = logging.getLogger(__name__)
@@ -146,33 +147,90 @@ def get_global_settings():
 from app.core.utils import get_app_base_url
 
 
+# --- One-shot session flash messages ---------------------------------------
+#
+# Used to hand a freshly generated credential to the very next rendered page
+# without putting it in a URL. A redirect query string ends up in browser
+# history, the server access log, and any outbound Referer header; the session
+# cookie ends up in none of those. The value is popped (not read) so it lives
+# for exactly one render.
+
+FLASH_SESSION_KEY = "_flash"
+
+
+def set_flash(request: Request, **payload):
+    """Stash a one-shot message for the next rendered page."""
+    request.session[FLASH_SESSION_KEY] = payload
+
+
+def pop_flash(request: Request) -> dict:
+    """Return and clear the pending flash payload. Empty dict when none."""
+    flash = request.session.pop(FLASH_SESSION_KEY, None)
+    return flash if isinstance(flash, dict) else {}
+
+
+def is_feed_auth_enabled(global_settings: dict) -> bool:
+    """True when feed URLs must carry a credential."""
+    value = global_settings.get('enable_feed_auth')
+    if value is None:
+        return False
+    return str(value).lower() in ('1', 'true', 'yes', 'on')
+
+
+def build_feed_auth_token(global_settings: dict, user_obj=None) -> str:
+    """Return the base64 ?auth= credential for feed URLs.
+
+    The credential is a per-user (or, standalone, a per-install) random feed
+    token - never the account password. The token is a bearer credential for
+    read-only feed access only, is revocable on its own, and its leakage into
+    podcast-client logs and proxies does not expose the login.
+
+    Raises RuntimeError when no token can be resolved. That is deliberate: the
+    old code silently fell back to the session-held account password, so a
+    missing identity produced a working URL built from a real credential.
+    Failing loudly is the point of this change.
+    """
+    from app.infra.database import ensure_feed_token, ensure_global_feed_token
+
+    if global_settings.get('auth_enabled'):
+        # Integrated auth: the feed credential belongs to the logged-in user.
+        user_id = getattr(user_obj, "id", None)
+        username = getattr(user_obj, "username", None)
+        if not user_id or not username:
+            raise RuntimeError(
+                "Cannot build a feed URL: user authentication is enabled but "
+                "no authenticated user was supplied."
+            )
+        credential = ensure_feed_token(user_id)
+        auth_user = username
+    else:
+        # Standalone auth: one shared install-wide feed token.
+        credential = ensure_global_feed_token()
+        auth_user = global_settings.get('feed_auth_username') or 'feed'
+
+    if not credential:
+        raise RuntimeError("Cannot build a feed URL: no feed token available.")
+
+    import base64
+    return base64.b64encode(f"{auth_user}:{credential}".encode()).decode()
+
+
+def append_feed_auth(url: str, global_settings: dict, user_obj=None) -> str:
+    """Append the ?auth= feed token to url when feed auth is enabled."""
+    if not is_feed_auth_enabled(global_settings):
+        return url
+    token = build_feed_auth_token(global_settings, user_obj)
+    separator = "&" if "?" in url else "?"
+    return f"{url}{separator}auth={token}"
+
 
 def generate_rss_links(request: Request, sub, global_settings: dict, user_obj=None):
     """Consolidated logic for generating RSS links with optional auth injection."""
     base_url = get_app_base_url(global_settings, request)
-    
-    rss_url = f"{base_url}/feeds/{sub.slug}.xml"
-    
-    # Inject Auth if Enabled
-    auth_enabled_val = global_settings.get('enable_feed_auth')
-    is_auth_enabled = str(auth_enabled_val).lower() in ('1', 'true', 'yes', 'on') if auth_enabled_val is not None else False
-    
-    if is_auth_enabled:
-        if global_settings.get('auth_enabled'):
-            # Integrated Auth: Use same credentials as dashboard
-            auth_user = user_obj.username if user_obj else "admin"
-            auth_pass = request.session.get("user_pass", "")
-        else:
-            # Standalone Auth: Use manually provided feed credentials
-            auth_user = global_settings.get('feed_auth_username')
-            auth_pass = global_settings.get('feed_auth_password')
-            
-        if auth_user and auth_pass:
-            import base64
-            token = base64.b64encode(f"{auth_user}:{auth_pass}".encode()).decode()
-            separator = "&" if "?" in rss_url else "?"
-            rss_url = f"{rss_url}{separator}auth={token}"
 
+    rss_url = append_feed_auth(
+        f"{base_url}/feeds/{sub.slug}.xml", global_settings, user_obj
+    )
 
     return {
         "rss": rss_url,
@@ -262,8 +320,9 @@ async def login(request: Request, username: str = Form(...), password: str = For
     
     # Set session
     request.session[SESSION_USER_KEY] = user_row['id']
-    request.session["user_pass"] = password
-    
+    # The account password is deliberately NOT retained in the session. Feed
+    # URLs are built from the user's feed token (see build_feed_auth_token).
+
     return RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
 
 @router.get("/logout")
@@ -321,9 +380,9 @@ async def change_password(
         conn.execute("UPDATE app_settings SET require_password_change = 0, initial_password = NULL WHERE id = 1")
         conn.commit()
     
-    # Update session password
-    request.session["user_pass"] = new_password
-    
+    # No password is kept in the session; the feed token is unaffected by a
+    # password change and keeps working.
+
     return RedirectResponse(url="/admin/system?password_changed=1", status_code=status.HTTP_302_FOUND)
 
 @router.get("/request-access", response_class=HTMLResponse)
@@ -389,27 +448,27 @@ async def update_system_settings(
     feed_auth_password: str = Form(None),
     redirect_to: str = Form(None)
 ):
-    from app.infra.database import get_db_connection
-    
-    # Feed password is stored as plaintext to allow injection into links
-    # (Feed auth is a simpler security tier than app login)
-    hashed_feed_password = feed_auth_password
+    from app.infra.database import get_db_connection, ensure_global_feed_token
+
+    # The submitted feed password is deliberately ignored and never stored.
+    # Feed access is authenticated by a random feed token, not by any
+    # password. The feed_auth_password column is left untouched here (dropping
+    # it is a separate change); nothing reads it any more.
+    del feed_auth_password
+
+    # Standalone feed auth needs a username plus an install-wide feed token.
+    # The token is generated on demand, so the only thing that can be missing
+    # is the username.
+    if enable_feed_auth and not auth_enabled:
+        if not feed_auth_username:
+            enable_feed_auth = False
+        else:
+            ensure_global_feed_token()
 
     with get_db_connection() as conn:
         # Get current settings
-        current_settings = conn.execute("SELECT auth_enabled, feed_auth_password FROM app_settings WHERE id = 1").fetchone()
-        
-        # Get current feed password if not changing
-        if enable_feed_auth and not feed_auth_password:
-            hashed_feed_password = current_settings['feed_auth_password'] if current_settings else None
+        current_settings = conn.execute("SELECT auth_enabled FROM app_settings WHERE id = 1").fetchone()
 
-        # Backend Validation: If feed auth is enabled standalone, ensure we have credentials
-        if enable_feed_auth and not auth_enabled:
-            # Check if we have username AND (new password OR existing password)
-            if not feed_auth_username or not (feed_auth_password or hashed_feed_password):
-                # Force disable feed auth if credentials missing
-                enable_feed_auth = False
-        
         # Check if auth is being enabled for the first time
         if auth_enabled and (not current_settings or not current_settings['auth_enabled']):
             # Check if ANY admin user exists (regardless of username)
@@ -446,14 +505,12 @@ async def update_system_settings(
                 ip_allowlist = ?,
                 enable_feed_auth = ?,
                 feed_auth_username = ?,
-                feed_auth_password = COALESCE(?, feed_auth_password),
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = 1
         """, (concurrent_downloads, retention_days, check_interval_minutes, app_external_url,
               1 if auth_enabled else 0, ip_allowlist,
-              1 if enable_feed_auth else 0, 
-              feed_auth_username if feed_auth_username else None, 
-              hashed_feed_password if hashed_feed_password else None))
+              1 if enable_feed_auth else 0,
+              feed_auth_username if feed_auth_username else None))
         conn.commit()
     
     # Regenerate all feeds if the URL changed
@@ -851,7 +908,11 @@ async def admin_access(request: Request):
     # Load settings and user
     settings = get_global_settings()
     user = get_current_user(request)
-    
+
+    # Consume any one-shot flash (e.g. a freshly minted temporary password).
+    # Popped, so a reload of this page will not show it again.
+    flash = pop_flash(request)
+
     # Load pending access requests
     with get_db_connection() as conn:
         pending_requests = conn.execute(
@@ -884,7 +945,40 @@ async def admin_access(request: Request):
         "active_users": [dict(row) for row in active_users],
         "login_history": [dict(row) for row in login_history],
         "pending_requests_count": get_pending_requests_count(),
+        "flash": flash,
     })
+
+
+@router.post("/feed-token/rotate")
+async def rotate_own_feed_token(request: Request):
+    """Rotate the current user's feed token, revoking every existing feed URL.
+
+    Revocability is the point of a feed token: the old ?auth= value stops
+    working immediately and the account password is untouched.
+    """
+    from app.infra.database import rotate_feed_token, ensure_global_feed_token
+
+    global_settings = get_global_settings()
+
+    if global_settings.get('auth_enabled'):
+        user = get_current_user(request)
+        user_id = getattr(user, "id", None)
+        if not user_id:
+            return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+        rotate_feed_token(user_id)
+        logger.info(f"AUTH - Feed token rotated for user id {user_id}")
+    else:
+        # Standalone mode: rotate the install-wide token by clearing and
+        # regenerating it.
+        from app.infra.database import get_db_connection
+        with get_db_connection() as conn:
+            conn.execute("UPDATE app_settings SET feed_auth_token = NULL WHERE id = 1")
+            conn.commit()
+        ensure_global_feed_token()
+        logger.info("AUTH - Global feed token rotated")
+
+    set_flash(request, feed_token_rotated=True)
+    return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
 
 @router.post("/admin/users/{user_id}/password")
 async def admin_change_user_password(
@@ -991,9 +1085,16 @@ async def approve_access_request(request: Request, request_id: int):
         conn.commit()
         
         logger.info(f"AUTH - Access request approved: {access_req['username']} - Temp password generated")
-        
-    # Redirect back to access page with success message
-    return RedirectResponse(url=f"/admin/access?approved={access_req['username']}&password={temp_password}", status_code=303)
+
+    # Hand the temporary password to the next render via a one-shot session
+    # flash. It must never go in the URL: query strings are recorded in
+    # browser history, server access logs, and outbound Referer headers.
+    set_flash(
+        request,
+        approved_username=access_req['username'],
+        approved_temp_password=temp_password,
+    )
+    return RedirectResponse(url="/admin/access", status_code=303)
 
 # --- Admin: Deny Access Request ---
 @router.post("/admin/access-requests/{request_id}/deny")
@@ -1158,27 +1259,9 @@ def _render_index(request: Request, error: str = None):
         # Determine Base URL using consolidated logic
         base_url = get_app_base_url(global_settings, request)
         
-        rss_url = f"{base_url}/feed/unified.xml"
-        
-        # Inject Auth if Enabled
-        auth_enabled_val = global_settings.get('enable_feed_auth')
-        is_auth_enabled = str(auth_enabled_val).lower() in ('1', 'true', 'yes', 'on') if auth_enabled_val is not None else False
-        
-        if is_auth_enabled:
-            # Determine credentials
-            if global_settings.get('auth_enabled'):
-                auth_user = user.username if user else "admin"
-                auth_pass = request.session.get("user_pass", "")
-            else:
-                auth_user = global_settings.get('feed_auth_username')
-                auth_pass = global_settings.get('feed_auth_password')
-                
-            if auth_user and auth_pass:
-                import base64
-                token = base64.b64encode(f"{auth_user}:{auth_pass}".encode()).decode()
-                separator = "&" if "?" in rss_url else "?"
-                rss_url = f"{rss_url}{separator}auth={token}"
-
+        rss_url = append_feed_auth(
+            f"{base_url}/feed/unified.xml", global_settings, user
+        )
 
         unified_links = {
             "rss": rss_url,
@@ -1200,7 +1283,8 @@ def _render_index(request: Request, error: str = None):
         "config_warning": config_warning,
         "queue": queue,
         "unified_links": unified_links,
-        "settings": global_settings
+        "settings": global_settings,
+        "flash": pop_flash(request),
     })
 
 @router.get("/", response_class=HTMLResponse)
@@ -1693,19 +1777,26 @@ async def get_unified_feed(request: Request):
                 decoded_creds = base64.b64decode(encoded_creds).decode('utf-8')
                 username, password = decoded_creds.split(':', 1)
                 
+                # `password` here is the feed token, not an account password.
+                # Account passwords are no longer accepted on feed routes at
+                # all - there is no fallback branch that would take one.
                 if settings.get('auth_enabled'):
-                     # Validate against app users
-                    from app.infra.database import get_db_connection
-                    from app.web.auth_utils import verify_password
-                    with get_db_connection() as conn:
-                        user_row = conn.execute("SELECT password_hash FROM users WHERE username = ?", (username,)).fetchone()
-                        if user_row and verify_password(password, user_row['password_hash']):
-                            authorized = True
+                    # Validate the presented feed token against app users.
+                    from app.infra.database import find_user_by_feed_token
+                    token_user = find_user_by_feed_token(password)
+                    if token_user and token_user.get('username') == username:
+                        authorized = True
                 else:
-                    # Validate against standalone settings
+                    # Validate against the install-wide feed token.
+                    from app.infra.database import get_global_feed_token
                     expected_user = settings.get('feed_auth_username')
-                    expected_pass = settings.get('feed_auth_password')
-                    if username == expected_user and password == expected_pass:
+                    expected_token = get_global_feed_token()
+                    if (
+                        expected_user
+                        and expected_token
+                        and username == expected_user
+                        and hmac.compare_digest(str(expected_token), password)
+                    ):
                         authorized = True
             except Exception:
                 pass
