@@ -1149,12 +1149,32 @@ async def admin_access(request: Request):
     })
 
 
-@router.post("/feed-token/rotate", dependencies=[Depends(require_admin_action)])
+@router.post("/feed-token/rotate", dependencies=[Depends(require_user_action)])
 async def rotate_own_feed_token(request: Request):
     """Rotate the current user's feed token, revoking every existing feed URL.
 
     Revocability is the point of a feed token: the old ?auth= value stops
     working immediately and the account password is untouched.
+
+    `require_user_action`, not `require_admin_action`. Per-user revocability is
+    the whole reason the token exists, and the dashboard renders the "Rotate
+    Feed Token" button for every signed-in user whenever feed auth is on -
+    under an admin gate a non-admin saw the button, got a 403 on click, and
+    could never revoke their own leaked feed URL by any route at all. There is
+    no privilege to protect here: the route reads the caller's own identity
+    from the session and can only ever rewrite that user's row.
+
+    The standalone branch below rotates the install-wide token, and it stays
+    reachable under the same guard - not as a relaxation but because there is
+    nothing to relax. That branch is selected by `auth_enabled = 0`, a
+    deployment with no users and no sessions, where `require_admin` already
+    degraded to a synthetic dummy admin and rejected nobody. "Admin-only" was
+    never expressible there; `require_same_origin` was the entire boundary
+    under the old dependency and remains the entire boundary under the new
+    one, with the IP allowlist behind it. Conversely a non-admin in multi-user
+    mode cannot reach the standalone branch to rotate the shared token,
+    because the branch is chosen by the same `auth_enabled` flag that gave
+    them a session in the first place.
     """
     from app.infra.database import rotate_feed_token, ensure_global_feed_token
 
@@ -1375,6 +1395,40 @@ def _render_index(request: Request, error: str = None):
     
     subs_with_links = []
     global_settings = get_global_settings()
+
+    # A stale-but-real config must degrade, not 500.
+    #
+    # `build_feed_auth_token` raises when feed auth is enabled and the identity
+    # half of the credential is missing - in practice `feed_auth_username` NULL
+    # on a standalone install. No current save path can produce that, but the
+    # code this replaced tolerated it with an `or 'feed'` fallback, so an
+    # upgraded database can genuinely hold it. Left unhandled it took out the
+    # dashboard, which is the app's front page: the operator's first signal
+    # that a setting was stale was the whole site erroring.
+    #
+    # The old fallback is deliberately not restored. It built a URL the
+    # unified-feed validator answers with 401 - a feed that looks fine and
+    # silently never updates. Emitting the links without a credential and
+    # naming the setting in a banner is the honest failure.
+    feed_auth_error = None
+    if is_feed_auth_enabled(global_settings):
+        try:
+            build_feed_auth_token(global_settings, user)
+        except RuntimeError as exc:
+            feed_auth_error = str(exc)
+            logger.warning(
+                "Feed auth is enabled but no feed URL can be built, so the "
+                "dashboard is rendering unauthenticated links: %s", exc
+            )
+
+    # Link-building settings only. `global_settings` itself is still passed to
+    # the template untouched, so `settings.enable_feed_auth` keeps reflecting
+    # what is actually configured rather than what happens to work.
+    link_settings = global_settings
+    if feed_auth_error:
+        link_settings = dict(global_settings)
+        link_settings['enable_feed_auth'] = 0
+
     for sub in subs:
         # Get completed episodes for this subscription
         with get_db_connection() as conn:
@@ -1425,7 +1479,7 @@ def _render_index(request: Request, error: str = None):
         
         subs_with_links.append({
             "sub": sub,
-            "links": generate_rss_links(request, sub, global_settings, user),
+            "links": generate_rss_links(request, sub, link_settings, user),
             "episodes": [dict(ep) for ep in episodes],
             "episode_count": len(episodes),
             "processing_count": processing_count,
@@ -1460,7 +1514,7 @@ def _render_index(request: Request, error: str = None):
         base_url = get_app_base_url(global_settings, request)
         
         rss_url = append_feed_auth(
-            f"{base_url}/feed/unified.xml", global_settings, user
+            f"{base_url}/feed/unified.xml", link_settings, user
         )
 
         unified_links = {
@@ -1485,6 +1539,7 @@ def _render_index(request: Request, error: str = None):
         "settings": global_settings,
         "flash": pop_flash(request),
         "feed_url_notice": feed_url_notice_pending(global_settings, len(subs)),
+        "feed_auth_error": feed_auth_error,
     })
 
 @router.get("/", response_class=HTMLResponse)

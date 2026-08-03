@@ -1,5 +1,5 @@
 from fastapi import Request, HTTPException, status, Depends
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, JSONResponse, PlainTextResponse
 from starlette.middleware.sessions import SessionMiddleware
 from typing import Optional
 import logging
@@ -54,6 +54,38 @@ def _origin_diagnostics(request: Request) -> str:
         f"x-forwarded-host={_netloc(request.headers.get('x-forwarded-host'))!r} "
         f"public-application-url={_netloc(configured)!r}"
     )
+
+def _forbidden(request: Request, detail: str):
+    """Build a 403 response for use *inside* the middleware.
+
+    `auth_middleware` is installed with `@app.middleware("http")`, which wraps
+    it in Starlette's `BaseHTTPMiddleware`. Exception handlers - including
+    FastAPI's `HTTPException` handler - are mounted inside the router, further
+    down the stack, so an exception raised here has already escaped them by
+    the time it propagates. The only thing left above is
+    `ServerErrorMiddleware`, which turns it into a 500.
+
+    That is not academic: a logged-in non-admin requesting /admin/* received a
+    500 "Internal Server Error" instead of a 403, so a working authorization
+    decision was reported as a broken server. The middleware must *return* its
+    refusals, never raise them.
+
+    The response shape follows the request: an API/XHR caller that asked for
+    JSON gets JSON with the same `detail` key FastAPI's own handler produces,
+    so nothing downstream has to special-case middleware-origin refusals.
+    """
+    accept = (request.headers.get("accept") or "").lower()
+    wants_json = (
+        "application/json" in accept
+        or request.headers.get("x-requested-with", "").lower() == "xmlhttprequest"
+        or request.url.path.startswith("/api/")
+    )
+    if wants_json:
+        return JSONResponse(
+            {"detail": detail}, status_code=status.HTTP_403_FORBIDDEN
+        )
+    return PlainTextResponse(detail, status_code=status.HTTP_403_FORBIDDEN)
+
 
 def get_current_user(request: Request) -> Optional[User]:
     """Get the currently logged-in user from session."""
@@ -153,10 +185,10 @@ async def auth_middleware(request: Request, call_next):
         client_ip = get_client_ip(request)
         if not is_ip_allowed(client_ip, settings['ip_allowlist']):
             logger.warning(f"AUTH - IP blocked: {client_ip} - Path: {path}")
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied from your IP address"
-            )
+            # Returned, not raised - see `_forbidden`. Same defect as the
+            # admin check below: raising here reported an IP allowlist denial
+            # as a 500.
+            return _forbidden(request, "Access denied from your IP address")
 
     # 2. USER AUTHENTICATION CHECK
     # Only if auth is enabled
@@ -185,10 +217,14 @@ async def auth_middleware(request: Request, call_next):
         # 3. ADMIN PRIVILEGE CHECK
         # Protect /admin routes from non-admin users
         if path.startswith("/admin") and not user.is_admin:
-             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Admin privileges required"
+            # Returned, not raised. See `_forbidden`: an HTTPException raised
+            # in a BaseHTTPMiddleware never reaches FastAPI's exception
+            # handler, so this correct 403 decision was surfacing as a 500.
+            logger.info(
+                "AUTH - Non-admin user %r denied admin path %s",
+                getattr(user, "username", None), path,
             )
+            return _forbidden(request, "Admin privileges required")
 
     response = await call_next(request)
 

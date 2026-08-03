@@ -32,6 +32,34 @@
 </div>
 {% endif %}
 
+{# Stale feed-auth config.
+  Feed auth is switched on but the app cannot build a feed credential - in
+  practice an upgraded install whose Feed Auth Username was never set, which
+  older code papered over with a bogus default that produced permanently-401
+  feed URLs. The links below are therefore rendered without a token. This
+  banner exists so the dashboard can say that plainly instead of returning a
+  500 on the app's front page.
+#}
+{% if feed_auth_error %}
+<div class="alert-warning mb-6" id="feed-auth-error">
+    <svg class="h-5 w-5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+        <path fill-rule="evenodd"
+            d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
+            clip-rule="evenodd" />
+    </svg>
+    <div class="flex-1">
+        <p class="font-bold mb-1">Feed authentication is on, but incomplete</p>
+        <p class="text-sm opacity-90">
+            Feed URLs are protected, but this install has no <strong>Feed Auth Username</strong> configured,
+            so no working feed link can be generated. The links below are shown without their access token
+            and will be rejected until this is fixed. Set a Feed Auth Username in
+            <a href="/admin/system" class="underline font-medium">Admin &rsaquo; System</a> and save,
+            then copy the links again.
+        </p>
+    </div>
+</div>
+{% endif %}
+
 <!-- Config Warning -->
 {% if config_warning %}
 <div class="alert-warning mb-6">
