@@ -8,6 +8,7 @@ from app.web.auth import get_current_user, require_auth, require_admin, log_logi
 from app.web.auth_utils import hash_password, verify_password, generate_secure_password, get_client_ip
 from app.web.rate_limiter import login_rate_limiter, check_rate_limit
 from app.infra.database import get_db_connection
+from app.core.config import settings as app_settings
 from datetime import datetime
 import os
 import logging
@@ -477,7 +478,7 @@ async def login_page(request: Request):
 @router.post("/login")
 async def login(request: Request, username: str = Form(...), password: str = Form(...)):
     """Handle login submission with rate limiting protection."""
-    client_ip = get_client_ip(request)
+    client_ip = get_client_ip(request, trust_proxy_headers=app_settings.TRUST_PROXY_HEADERS)
     user_agent = request.headers.get("user-agent", "")
     
     # Check rate limit before processing login
@@ -599,7 +600,7 @@ async def submit_access_request(
     reason: str = Form(None)
 ):
     """Handle access request submission."""
-    client_ip = get_client_ip(request)
+    client_ip = get_client_ip(request, trust_proxy_headers=app_settings.TRUST_PROXY_HEADERS)
     
     with get_db_connection() as conn:
         conn.execute(

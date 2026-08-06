@@ -38,16 +38,25 @@ def generate_feed_token() -> str:
     """
     return secrets.token_urlsafe(32)
 
-def get_client_ip(request) -> str:
-    """Extract client IP from request, considering proxies."""
-    # Check for Cloudflare headers first
-    if "CF-Connecting-IP" in request.headers:
-        return request.headers["CF-Connecting-IP"]
-    # Check for standard proxy headers
-    if "X-Forwarded-For" in request.headers:
-        return request.headers["X-Forwarded-For"].split(",")[0].strip()
-    if "X-Real-IP" in request.headers:
-        return request.headers["X-Real-IP"]
+def get_client_ip(request, trust_proxy_headers: bool = False) -> str:
+    """Extract client IP from request, considering proxies.
+
+    Proxy headers (CF-Connecting-IP, X-Forwarded-For, X-Real-IP) are only
+    honored when `trust_proxy_headers` is True. They are ordinary request
+    headers any direct client can set, and this value feeds both the global
+    IP allowlist and login rate-limiting, so trusting them unconditionally
+    lets a direct (non-proxied) caller spoof an allowlisted IP or bypass
+    lockout entirely. Callers pass `settings.TRUST_PROXY_HEADERS`.
+    """
+    if trust_proxy_headers:
+        # Check for Cloudflare headers first
+        if "CF-Connecting-IP" in request.headers:
+            return request.headers["CF-Connecting-IP"]
+        # Check for standard proxy headers
+        if "X-Forwarded-For" in request.headers:
+            return request.headers["X-Forwarded-For"].split(",")[0].strip()
+        if "X-Real-IP" in request.headers:
+            return request.headers["X-Real-IP"]
     # Fallback to direct client
     return request.client.host if request.client else "unknown"
 

@@ -11,6 +11,15 @@ class Settings(BaseSettings):
     OPENROUTER_API_KEY: str | None = Field(None, description="OpenRouter API Key")
     LOG_LEVEL: str = "INFO"
     SESSION_SECRET_KEY: str = Field("super-secret-session-key-change-me", description="Secret key for session encryption")
+    # The IP allowlist (app_settings.ip_allowlist) is the entire security boundary
+    # in standalone/no-auth mode (see CLAUDE.local.md), and get_client_ip() honors
+    # CF-Connecting-IP/X-Forwarded-For/X-Real-IP to support that allowlist behind a
+    # real reverse proxy. Those headers are attacker-controlled on any request that
+    # does NOT pass through a trusted proxy, so trusting them unconditionally lets
+    # anyone spoof an allowlisted IP or defeat login rate-limiting. Default is off;
+    # only set true once a reverse proxy in front of this app is guaranteed to
+    # overwrite (not merge) these headers on every request.
+    TRUST_PROXY_HEADERS: bool = Field(False, description="Trust CF-Connecting-IP/X-Forwarded-For/X-Real-IP from the incoming request. Only enable behind a reverse proxy that strips/overwrites these headers.")
     
     # Paths
     DATA_DIR: str = "/data"

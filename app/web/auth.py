@@ -8,6 +8,7 @@ from datetime import datetime
 from app.infra.database import get_db_connection
 from app.web.auth_utils import get_client_ip, is_ip_allowed, verify_password
 from app.core.models import User
+from app.core.config import settings as app_settings
 
 logger = logging.getLogger(__name__)
 
@@ -182,7 +183,7 @@ async def auth_middleware(request: Request, call_next):
     # 1. GLOBAL IP CHECK (High Priority)
     # If an allowlist is set, it applies to EVERYTHING (Admin, Feeds, Audio, Dashboard)
     if settings['ip_allowlist']:
-        client_ip = get_client_ip(request)
+        client_ip = get_client_ip(request, trust_proxy_headers=app_settings.TRUST_PROXY_HEADERS)
         if not is_ip_allowed(client_ip, settings['ip_allowlist']):
             logger.warning(f"AUTH - IP blocked: {client_ip} - Path: {path}")
             # Returned, not raised - see `_forbidden`. Same defect as the
@@ -197,7 +198,7 @@ async def auth_middleware(request: Request, call_next):
         user = get_current_user(request)
         if not user:
             # Log the attempt
-            client_ip = get_client_ip(request)
+            client_ip = get_client_ip(request, trust_proxy_headers=app_settings.TRUST_PROXY_HEADERS)
             with get_db_connection() as conn:
                 conn.execute(
                     "INSERT INTO login_attempts (username, ip_address, success, user_agent) VALUES (?, ?, ?, ?)",
