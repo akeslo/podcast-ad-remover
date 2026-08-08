@@ -356,7 +356,7 @@ class Processor:
                      try:
                          transcript = json.loads(content)
                          logger.info(f"Successfully loaded JSON transcript for {ep.title}")
-                     except:
+                     except (json.JSONDecodeError, TypeError, ValueError):
                          try:
                              transcript = ast.literal_eval(content)
                              logger.info(f"Successfully loaded legacy dict transcript for {ep.title}")
@@ -891,7 +891,7 @@ class Processor:
                                 kept_lines.append(line)
                         else:
                             kept_lines.append(line)  # Keep non-dated lines
-                    except:
+                    except (IndexError, ValueError):
                         kept_lines.append(line)
                 
                 if len(kept_lines) < original_count:

@@ -786,16 +786,16 @@ async def update_ai_settings(
     import json
     try:
         json.loads(ai_model_cascade)
-    except:
+    except (json.JSONDecodeError, TypeError, ValueError):
         ai_model_cascade = '["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"]'
-    
+
     # Validate gemini_api_keys is valid JSON array
     if gemini_api_keys:
         try:
             parsed_keys = json.loads(gemini_api_keys)
             if not isinstance(parsed_keys, list):
                 gemini_api_keys = "[]"
-        except:
+        except (json.JSONDecodeError, TypeError, ValueError):
             gemini_api_keys = "[]"
     else:
         gemini_api_keys = "[]"
