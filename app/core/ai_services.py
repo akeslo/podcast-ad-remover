@@ -542,7 +542,7 @@ class AdDetector:
                         if isinstance(parsed, list) and len(parsed) > 0:
                             # Return first key for compatibility, but full list used below
                             db_key = parsed[0]
-                    except:
+                    except (json.JSONDecodeError, TypeError):
                         pass
                 # Fallback to legacy single key field
                 if not db_key:
@@ -572,7 +572,7 @@ class AdDetector:
                 parsed = json.loads(model)
                 if isinstance(parsed, list): models_list = parsed
                 else: models_list = [model]
-            except:
+            except (json.JSONDecodeError, TypeError):
                 models_list = [model]
         else:
             # Load from DB
@@ -611,7 +611,7 @@ class AdDetector:
                     parsed = json.loads(db_keys_json)
                     if isinstance(parsed, list):
                         api_keys.extend([k for k in parsed if k and k.strip()])
-                except:
+                except (json.JSONDecodeError, TypeError):
                     pass
             
             # 2. Legacy single key from DB
@@ -786,7 +786,8 @@ class AdDetector:
             if match:
                 try:
                     return json.loads(match.group(0))
-                except: pass
+                except json.JSONDecodeError:
+                    pass
             
             logger.error(f"Failed to parse JSON response: {text[:200]}...")
             return []
@@ -807,13 +808,14 @@ class AdDetector:
                             parsed = json.loads(row['gemini_api_keys'])
                             if isinstance(parsed, list) and len(parsed) > 0:
                                 api_key = parsed[0]
-                        except:
+                        except (json.JSONDecodeError, TypeError):
                             pass
                     # Fallback to legacy single key
                     if not api_key and row['gemini_api_key']:
                         api_key = row['gemini_api_key']
-        except: pass
-        
+        except Exception as e:
+            logger.error(f"Failed to resolve Gemini API key from DB: {e}")
+
         # Fallback to env
         if not api_key:
             api_key = settings.GEMINI_API_KEY
@@ -845,7 +847,7 @@ class AdDetector:
                 parsed = json.loads(gemini_keys_json)
                 if isinstance(parsed, list) and len(parsed) > 0:
                     return True
-            except:
+            except (json.JSONDecodeError, TypeError):
                 pass
         if self.settings.get('gemini_api_key') or settings.GEMINI_API_KEY: 
             return True
@@ -871,7 +873,8 @@ class AdDetector:
                     row = conn.execute("SELECT piper_model FROM app_settings WHERE id = 1").fetchone()
                     if row and row['piper_model']:
                         piper_model_file = row['piper_model']
-            except: pass
+            except Exception as e:
+                logger.error(f"Failed to load configured piper model, using default: {e}")
             
             # Ensure model exists
             await self._ensure_piper_model(piper_model_file)
