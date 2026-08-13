@@ -12,6 +12,7 @@ import logging
 
 from app.core.config import settings
 from app.infra.repository import EpisodeRepository, SubscriptionRepository
+from app.web.auth_utils import get_client_ip
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -109,11 +110,11 @@ async def serve_audio(path: str, request: Request):
                     # Find episode by filename
                     episode = ep_repo.get_by_subscription_and_filename(sub.id, filename)
                     if episode:
-                        # Get client IP
-                        client_ip = request.headers.get("X-Forwarded-For", request.client.host if request.client else "unknown")
-                        if "," in client_ip:
-                            client_ip = client_ip.split(",")[0].strip()
-                        
+                        # Get client IP (respects TRUST_PROXY_HEADERS same as auth_utils'
+                        # other callers, so an un-proxied caller can't spoof X-Forwarded-For
+                        # to reset another listener's dedup window)
+                        client_ip = get_client_ip(request, settings.TRUST_PROXY_HEADERS)
+
                         # Deduplicated listen count
                         if _should_count_listen(client_ip, episode.id):
                             ep_repo.increment_listen_count(episode.id)
