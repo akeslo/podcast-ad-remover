@@ -199,21 +199,9 @@ app = FastAPI(
     redoc_url="/api/redoc" if settings.ENVIRONMENT != "production" else None  # Hide redoc in production
 )
 
-_DEFAULT_SESSION_SECRET = "super-secret-session-key-change-me"
-if settings.SESSION_SECRET_KEY == _DEFAULT_SESSION_SECRET:
-    # This default ships in the public source, so a deployment that never sets
-    # SESSION_SECRET_KEY signs its session cookies with a key any attacker can
-    # read too. Anyone can then forge a `session` cookie for any user_id
-    # (including an admin) and walk straight past require_auth/require_admin.
-    # Not a startup crash on purpose - this is homelab software people run
-    # standalone with the IP allowlist as their real boundary - but it must be
-    # loud, not silent.
-    logger.critical(
-        "SECURITY: SESSION_SECRET_KEY is unset (using the public default). "
-        "Session cookies are forgeable by anyone who reads the source. "
-        "Set SESSION_SECRET_KEY to a random value (e.g. `openssl rand -hex 32`) "
-        "in your .env immediately."
-    )
+# SESSION_SECRET_KEY has no working default (app.core.config.Settings) - the
+# app fails to start at import time if it is unset, so no runtime check is
+# needed here anymore.
 
 # Add middleware (order matters - added in reverse of execution order)
 # Execution order: SecurityHeadersMiddleware -> SessionMiddleware -> auth_middleware -> feed_auth_middleware

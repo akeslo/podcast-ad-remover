@@ -77,20 +77,23 @@ async def serve_audio(path: str, request: Request):
     """
     # Build full file path
     file_path = Path(settings.PODCASTS_DIR) / path
-    
-    if not file_path.exists():
-        logger.warning(f"Audio file not found: {file_path}")
-        raise HTTPException(status_code=404, detail="Audio file not found")
-    
-    if not file_path.is_file():
-        raise HTTPException(status_code=404, detail="Not a file")
-    
-    # Security: ensure file is within PODCASTS_DIR
+
+    # Security: ensure the resolved path is within PODCASTS_DIR - checked
+    # before any filesystem probe (exists()/is_file()) touches the
+    # unvalidated path, so a traversal attempt never gets to run against the
+    # filesystem at all.
     try:
         file_path.resolve().relative_to(Path(settings.PODCASTS_DIR).resolve())
     except ValueError:
         raise HTTPException(status_code=403, detail="Access denied")
-    
+
+    if not file_path.exists():
+        logger.warning(f"Audio file not found: {file_path}")
+        raise HTTPException(status_code=404, detail="Audio file not found")
+
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Not a file")
+
     # Track listen if this is a first-byte request
     if _is_first_byte_request(request):
         try:

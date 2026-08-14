@@ -394,8 +394,10 @@ class Processor:
 
                                 if total > 0:
                                     percent = int((downloaded / total) * 100)
-                                    # Update DB every 5% 
-                                    if percent % 5 == 0 and percent != last_logged_percent:
+                                    # Log roughly every 5% - advanced-past-threshold rather
+                                    # than exact modulo-5, so a large chunk that jumps e.g.
+                                    # 41% -> 49% still logs instead of skipping the update.
+                                    if percent >= last_logged_percent + 5:
                                         self.ep_repo.update_progress(ep.id, "downloading", percent)
                                         logger.info(f"Downloading {ep.title}: {percent}%")
                                         last_logged_percent = percent

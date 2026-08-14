@@ -1,4 +1,5 @@
 import bcrypt
+import ipaddress
 import secrets
 import string
 from typing import Optional
@@ -61,11 +62,28 @@ def get_client_ip(request, trust_proxy_headers: bool = False) -> str:
     return request.client.host if request.client else "unknown"
 
 def is_ip_allowed(ip: str, allowlist: Optional[str]) -> bool:
-    """Check if IP is in the allowlist."""
+    """Check if IP is in the allowlist.
+
+    Allowlist entries may be a bare IP or a CIDR range (e.g. 192.168.1.0/24).
+    """
     if not allowlist or not allowlist.strip():
         return True  # No allowlist means all IPs allowed
-    
-    allowed_ips = [ip.strip() for ip in allowlist.split(",") if ip.strip()]
-    
-    # Simple exact match for now (can be extended to support CIDR)
-    return ip in allowed_ips
+
+    try:
+        candidate = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+
+    entries = [e.strip() for e in allowlist.split(",") if e.strip()]
+    for entry in entries:
+        try:
+            if "/" in entry:
+                network = ipaddress.ip_network(entry, strict=False)
+                if candidate in network:
+                    return True
+            else:
+                if candidate == ipaddress.ip_address(entry):
+                    return True
+        except ValueError:
+            continue
+    return False

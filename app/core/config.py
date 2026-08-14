@@ -10,7 +10,10 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str | None = Field(None, description="Anthropic API Key")
     OPENROUTER_API_KEY: str | None = Field(None, description="OpenRouter API Key")
     LOG_LEVEL: str = "INFO"
-    SESSION_SECRET_KEY: str = Field("super-secret-session-key-change-me", description="Secret key for session encryption")
+    # No working default: a hardcoded default here is a public secret (it's in
+    # this repo's source), so anyone can forge a session cookie against it.
+    # Must be set via the SESSION_SECRET_KEY env var (e.g. `openssl rand -hex 32`).
+    SESSION_SECRET_KEY: str = Field(..., description="Secret key for session encryption. Required - no default.")
     # The IP allowlist (app_settings.ip_allowlist) is the entire security boundary
     # in standalone/no-auth mode (see CLAUDE.local.md), and get_client_ip() honors
     # CF-Connecting-IP/X-Forwarded-For/X-Real-IP to support that allowlist behind a

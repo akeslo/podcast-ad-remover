@@ -122,8 +122,7 @@ class AudioProcessor:
         except subprocess.CalledProcessError as e:
             logger.error(f"Failed to prepend audio: {e}")
             raise
-            raise
-            
+
     @staticmethod
     def concat_files(output_path: str, input_paths: List[str]):
         """Concatenate multiple audio files."""

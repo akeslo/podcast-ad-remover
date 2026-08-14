@@ -143,7 +143,7 @@
                     <span class="text-text-secondary">Auto</span>
                 </label>
                 <input type="number" id="refresh-interval" value="30" min="5" max="300"
-                    class="w-10 text-center border-none bg-transparent focus:ring-0 p-0 font-bold text-primary-400 appearance-none"
+                    class="w-10 text-center border-none bg-transparent focus:ring-0 p-0 font-bold text-primary-400 appearance-none no-spinner"
                     style="-moz-appearance: textfield;">
                 <span class="text-text-muted mr-2">s</span>
                 <span
@@ -442,11 +442,19 @@
 </script>
 
 <script nonce="{{ csp_nonce }}">
+    let _searchAbortController = null;
+
     async function searchPodcasts() {
         const query = document.getElementById('search-input').value;
         const resultsDiv = document.getElementById('search-results');
 
         if (!query) return;
+
+        // Cancel any still-in-flight search so a fast repeat click/Enter
+        // can't have an earlier, slower response race ahead of the latest one.
+        if (_searchAbortController) _searchAbortController.abort();
+        _searchAbortController = new AbortController();
+        const { signal } = _searchAbortController;
 
         resultsDiv.innerHTML = '<div class="text-center p-4 text-text-secondary">Searching...</div>';
 
@@ -454,7 +462,8 @@
             const res = await fetch('/api/search', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ query })
+                body: JSON.stringify({ query }),
+                signal
             });
             const data = await res.json();
 

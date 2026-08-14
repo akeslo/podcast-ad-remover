@@ -313,15 +313,29 @@ class EpisodeRepository:
             conn.execute("UPDATE episodes SET ai_summary = ? WHERE id = ?", (summary, id))
             conn.commit()
 
-    def update_status_by_guid(self, subscription_id: int, guid: str, status: str, condition_status: str = None):
-        """Update status of an episode by GUID, optionally only if current status matches condition."""
+    def update_status_by_guid(self, subscription_id: int, guid: str, status: str, condition_status: str = None, include_pending_manual: bool = False):
+        """Update status of an episode by GUID, optionally only if current status matches condition.
+
+        `include_pending_manual` additionally matches rows currently in
+        'pending_manual' - opt in explicitly, since that status marks an
+        episode a user deliberately held for manual review, and a routine
+        automatic sweep (e.g. the feed-check backfill) should not silently
+        override that hold just because it also matches `condition_status`.
+        """
         with get_db_connection() as conn:
             if condition_status:
-                conn.execute("""
-                    UPDATE episodes 
-                    SET status = ? 
-                    WHERE subscription_id = ? AND guid = ? AND (status = ? or status = 'pending_manual')
-                """, (status, subscription_id, guid, condition_status))
+                if include_pending_manual:
+                    conn.execute("""
+                        UPDATE episodes
+                        SET status = ?
+                        WHERE subscription_id = ? AND guid = ? AND (status = ? or status = 'pending_manual')
+                    """, (status, subscription_id, guid, condition_status))
+                else:
+                    conn.execute("""
+                        UPDATE episodes
+                        SET status = ?
+                        WHERE subscription_id = ? AND guid = ? AND status = ?
+                    """, (status, subscription_id, guid, condition_status))
             else:
                 conn.execute("""
                     UPDATE episodes 

@@ -1,8 +1,11 @@
 import feedparser
+import ipaddress
 import re
+import socket
 from datetime import datetime
 from time import mktime
 from typing import Optional, Tuple
+from urllib.parse import urlsplit
 
 def slugify(text: str) -> str:
     """Convert text to a filename-friendly slug."""
@@ -11,10 +14,45 @@ def slugify(text: str) -> str:
     text = re.sub(r'[-\s]+', '-', text).strip('-')
     return text
 
+
+def validate_feed_url(url: str) -> None:
+    """Reject feed URLs that could be used for SSRF against internal hosts.
+
+    Only http/https schemes are allowed, and the hostname must not resolve to
+    a private, loopback, link-local, or otherwise non-public IP address (this
+    also blocks cloud metadata endpoints like 169.254.169.254).
+    """
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https"):
+        raise ValueError("Feed URL must use http or https")
+
+    host = parts.hostname
+    if not host:
+        raise ValueError("Feed URL has no host")
+
+    try:
+        addrs = {info[4][0] for info in socket.getaddrinfo(host, None)}
+    except socket.gaierror as e:
+        raise ValueError(f"Could not resolve feed host: {e}")
+
+    for addr in addrs:
+        ip = ipaddress.ip_address(addr)
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        ):
+            raise ValueError("Feed URL resolves to a disallowed internal address")
+
+
 class FeedManager:
     @staticmethod
     def parse_feed(url: str) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
         """Parse feed and return (title, slug, image_url, description). Raises error if invalid."""
+        validate_feed_url(url)
         d = feedparser.parse(url)
         if d.bozo:
             raise ValueError(f"Invalid feed: {d.bozo_exception}")

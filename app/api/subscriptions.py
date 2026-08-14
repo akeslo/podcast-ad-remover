@@ -36,14 +36,17 @@ async def list_subscriptions():
 
 @router.post("/subscriptions", response_model=Subscription, dependencies=[Depends(require_user_action)])
 async def create_subscription(sub: SubscriptionCreate, initial_count: int = 5):
+    if not (0 <= initial_count <= 100):
+        raise HTTPException(status_code=400, detail="initial_count must be between 0 and 100")
+
     existing = repo.get_by_url(sub.feed_url)
     if existing:
         raise HTTPException(status_code=400, detail="Subscription already exists")
-    
+
     try:
         # Parse feed to get title
-        title, slug, image_url = FeedManager.parse_feed(sub.feed_url)
-        
+        title, slug, image_url, description = FeedManager.parse_feed(sub.feed_url)
+
         # Save to DB
         new_sub = repo.create(sub, title, slug, image_url)
         

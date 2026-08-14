@@ -293,7 +293,7 @@
         </label>
         <div class="flex items-center gap-1">
             <input type="number" id="refresh-interval" value="30" min="5" max="300"
-                class="w-8 text-center border-none bg-transparent focus:ring-0 p-0 font-bold text-primary-400 appearance-none text-xs"
+                class="w-8 text-center border-none bg-transparent focus:ring-0 p-0 font-bold text-primary-400 appearance-none text-xs no-spinner"
                 style="-moz-appearance: textfield;">
             <span class="text-xs text-text-muted">s</span>
             <span
@@ -1319,8 +1319,14 @@
         try {
             const response = await fetch(`/api/episodes/${id}`, { method: 'DELETE' });
             if (response.ok) window.location.reload();
-            else { alert('Failed to delete episode.'); btn.disabled = false; btn.innerHTML = originalText; }
-        } catch (e) { alert('Error deleting episode.'); btn.disabled = false; btn.innerHTML = originalText; }
+            else {
+                btn.disabled = false; btn.innerHTML = originalText;
+                if (confirm('Failed to delete episode. Retry?')) deleteEpisode(id);
+            }
+        } catch (e) {
+            btn.disabled = false; btn.innerHTML = originalText;
+            if (confirm('Error deleting episode. Retry?')) deleteEpisode(id);
+        }
     }
 
     async function downloadEpisode(id) {
@@ -1380,6 +1386,16 @@
         }
     }
 
+    // Matches admin/layout.html's Escape handling for its drawer - close the
+    // per-episode action sheet and any open per-episode dropdown menu on Esc,
+    // since neither was otherwise keyboard-dismissable.
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            closeActionSheet();
+            document.querySelectorAll('[id^=menu-]').forEach(x => x.classList.add('hidden'));
+        }
+    });
+
     async function checkNow(id) {
         if (!confirm('Check for new episodes now?')) return;
         await fetch(`/api/subscriptions/${id}/check`, { method: 'POST' });
@@ -1390,20 +1406,39 @@
         const action = skipTranscription ? "Reprocess (Keep Transcript)" : "Full Reprocess";
         if (!confirm(`${action}: Are you sure?`)) return;
         const url = `/api/episodes/${id}/reprocess` + (skipTranscription ? "?skip_transcription=true" : "");
+
+        // Give immediate feedback on whichever control triggered this - the
+        // clicked button still has focus at this point - rather than leaving
+        // the user staring at nothing for the 20s wait below.
+        const triggerBtn = document.activeElement && document.activeElement.tagName === 'BUTTON'
+            ? document.activeElement : null;
+        const originalText = triggerBtn ? triggerBtn.innerHTML : null;
+        if (triggerBtn) { triggerBtn.disabled = true; triggerBtn.innerHTML = 'Processing...'; }
+
         try {
             const response = await fetch(url, { method: 'POST' });
             if (response.ok) {
                 // Wait 20 seconds for system to queue the episode before refreshing
                 setTimeout(() => location.reload(), 20000);
+            } else {
+                if (triggerBtn) { triggerBtn.disabled = false; triggerBtn.innerHTML = originalText; }
+                alert(`Failed to trigger processing: ${response.status}`);
             }
-            else alert(`Failed to trigger processing: ${response.status}`);
-        } catch (e) { alert('Error starting processing.'); }
+        } catch (e) {
+            if (triggerBtn) { triggerBtn.disabled = false; triggerBtn.innerHTML = originalText; }
+            alert('Error starting processing.');
+        }
     }
 
     async function cancelEpisode(id) {
         if (!confirm('Cancel processing?')) return;
-        await fetch(`/api/episodes/${id}/cancel`, { method: 'POST' });
-        location.reload();
+        try {
+            const response = await fetch(`/api/episodes/${id}/cancel`, { method: 'POST' });
+            if (response.ok) { location.reload(); return; }
+            if (confirm('Failed to cancel episode. Retry?')) cancelEpisode(id);
+        } catch (e) {
+            if (confirm('Error cancelling episode. Retry?')) cancelEpisode(id);
+        }
     }
 
     async function trackListen(id) {

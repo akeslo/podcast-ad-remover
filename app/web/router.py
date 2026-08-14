@@ -496,8 +496,15 @@ async def login(request: Request, username: str = Form(...), password: str = For
     
     with get_db_connection() as conn:
         user_row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
-    
-    if not user_row or not verify_password(password, user_row['password_hash']):
+
+    # Always run a bcrypt compare, even when the username doesn't exist, so
+    # the response time for "no such user" and "wrong password" match - a
+    # short-circuit on a missing user_row is a timing side-channel that lets
+    # an attacker enumerate valid usernames.
+    _DUMMY_HASH = "$2b$12$C6UzMDM.H6dfI/f/IKcEeO0uwFf/CBaTfF1MDlp0HmnMjE0K9zGpO"
+    password_ok = verify_password(password, user_row['password_hash'] if user_row else _DUMMY_HASH)
+
+    if not user_row or not password_ok:
         # Record failed attempt and check if now locked
         is_locked = login_rate_limiter.record_failed_attempt(client_ip)
         log_login_attempt(username, client_ip, False, user_agent)
@@ -601,7 +608,12 @@ async def submit_access_request(
 ):
     """Handle access request submission."""
     client_ip = get_client_ip(request, trust_proxy_headers=app_settings.TRUST_PROXY_HEADERS)
-    
+
+    # Same IP-based limiter as /login, so this endpoint can't be hammered to
+    # spam the access_requests table or enumerate usernames.
+    check_rate_limit(client_ip)
+    login_rate_limiter.record_failed_attempt(client_ip)
+
     with get_db_connection() as conn:
         conn.execute(
             "INSERT INTO access_requests (username, email, reason, ip_address) VALUES (?, ?, ?, ?)",
@@ -992,8 +1004,8 @@ async def retry_episode(episode_id: int):
     # Check if already processing?
     status = ep_repo.get_status(episode_id)
     if status == 'processing':
-         return RedirectResponse(url="/admin/queue", status_code=303)
-         
+         return RedirectResponse(url="/admin/queue?error=Episode+is+already+processing", status_code=303)
+
     # Force to pending (Background processor will pick it up)
     from app.core.processor import Processor
     proc = Processor()
@@ -1623,7 +1635,10 @@ async def add_subscription(request: Request, background_tasks: BackgroundTasks, 
         retention_limit = initial_count
         
         sub_create = SubscriptionCreate(feed_url=feed_url)
-        new_sub = sub_repo.create(sub_create, "Loading...", f"loading-{int(__import__('time').time())}", None, "Fetching feed information...", retention_limit=retention_limit)
+        # Random suffix (not just time.time()) so two subscriptions created in
+        # the same second can't collide on the placeholder slug.
+        placeholder_slug = f"loading-{int(__import__('time').time())}-{__import__('secrets').token_hex(4)}"
+        new_sub = sub_repo.create(sub_create, "Loading...", placeholder_slug, None, "Fetching feed information...", retention_limit=retention_limit)
         
         # Apply other global defaults immediately
         sub_repo.update_settings(

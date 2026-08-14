@@ -181,7 +181,13 @@
         countdownSpan.textContent = '--';
     }
 
-    filterInput.addEventListener('input', filterLogs);
+    let _filterDebounceId = null;
+    function debouncedFilterLogs() {
+        if (_filterDebounceId) clearTimeout(_filterDebounceId);
+        _filterDebounceId = setTimeout(filterLogs, 200);
+    }
+
+    filterInput.addEventListener('input', debouncedFilterLogs);
     levelSelect.addEventListener('change', filterLogs);
     autoRefreshCheckbox.addEventListener('change', function () {
         if (this.checked) { startAutoRefresh(); } else { stopAutoRefresh(); }

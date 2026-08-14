@@ -2,8 +2,8 @@
 
 {% block content %}
 <div class="max-w-2xl mx-auto mt-8 px-4">
-    <div class="bg-white rounded-lg shadow-lg overflow-hidden">
-        <div class="bg-purple-600 px-6 py-4">
+    <div class="card-glass overflow-hidden">
+        <div class="bg-gradient-to-br from-primary-500 to-primary-600 -m-6 mb-6 px-6 py-4 rounded-t-2xl">
             <h2 class="text-xl font-bold text-white flex items-center gap-2">
                 <svg class="h-6 w-6" fill="currentColor" viewBox="0 0 24 24">
                     <path
@@ -13,48 +13,46 @@
             </h2>
         </div>
 
-        <div class="p-6">
-            <p class="text-gray-600 mb-6">
-                Apple Podcasts requires adding private feeds manually. Follow these steps:
-            </p>
+        <p class="text-text-secondary mb-6">
+            Apple Podcasts requires adding private feeds manually. Follow these steps:
+        </p>
 
-            <!-- Step 1: Copy URL -->
-            <div class="mb-8">
-                <h3 class="text-lg font-semibold text-gray-800 mb-2">1. Copy your Feed URL</h3>
-                <div class="flex gap-2">
-                    <input type="text" value="{{ feed_url }}" readonly
-                        class="flex-1 p-3 bg-gray-50 border border-gray-300 rounded-md font-mono text-sm text-gray-600 select-all"
-                        onclick="this.select()">
-                    <button onclick="copyUrl()" id="copyBtn"
-                        class="bg-purple-600 text-white px-6 py-2 rounded-md font-medium hover:bg-purple-700 transition-colors flex items-center gap-2">
-                        <span id="btnText">Copy</span>
-                    </button>
-                </div>
-                <p id="copyFeedback" class="text-green-600 text-sm mt-2 hidden font-medium">✓ Copied to clipboard!</p>
+        <!-- Step 1: Copy URL -->
+        <div class="mb-8">
+            <h3 class="text-lg font-semibold mb-2">1. Copy your Feed URL</h3>
+            <div class="flex gap-2">
+                <input type="text" value="{{ feed_url }}" readonly
+                    class="input flex-1 font-mono text-sm select-all"
+                    onclick="this.select()">
+                <button onclick="copyUrl()" id="copyBtn"
+                    class="btn-primary px-6 flex items-center gap-2">
+                    <span id="btnText">Copy</span>
+                </button>
             </div>
+            <p id="copyFeedback" class="text-green-400 text-sm mt-2 hidden font-medium">✓ Copied to clipboard!</p>
+        </div>
 
-            <!-- Step 2: Instructions -->
-            <div class="mb-8">
-                <h3 class="text-lg font-semibold text-gray-800 mb-2">2. Add to Apple Podcasts</h3>
-                <ol class="list-decimal pl-5 space-y-3 text-gray-700">
-                    <li>Open the <a href="podcasts://open"
-                            class="text-purple-600 font-semibold hover:underline">Podcasts app</a>.</li>
-                    <li>Go to the <strong>Library</strong> tab.</li>
-                    <li>Tap the <strong>... (More)</strong> button in the top-right corner.</li>
-                    <li>Select <strong>Follow a Show by URL...</strong></li>
-                    <li><strong>Paste</strong> the URL you copied above and tap <strong>Follow</strong>.</li>
-                </ol>
-            </div>
+        <!-- Step 2: Instructions -->
+        <div class="mb-8">
+            <h3 class="text-lg font-semibold mb-2">2. Add to Apple Podcasts</h3>
+            <ol class="list-decimal pl-5 space-y-3 text-text-secondary">
+                <li>Open the <a href="podcasts://open"
+                        class="text-primary-400 font-semibold hover:underline">Podcasts app</a>.</li>
+                <li>Go to the <strong class="text-text-primary">Library</strong> tab.</li>
+                <li>Tap the <strong class="text-text-primary">... (More)</strong> button in the top-right corner.</li>
+                <li>Select <strong class="text-text-primary">Follow a Show by URL...</strong></li>
+                <li><strong class="text-text-primary">Paste</strong> the URL you copied above and tap <strong class="text-text-primary">Follow</strong>.</li>
+            </ol>
+        </div>
 
-            <div class="border-t pt-6 flex justify-between items-center">
-                <a href="/" class="text-gray-600 hover:text-gray-900 font-medium text-sm flex items-center gap-1">
-                    ← <span class="hidden xs:inline">Back to Dashboard</span><span class="xs:hidden">Back</span>
-                </a>
-                <a href="podcasts://open"
-                    class="text-purple-600 hover:text-purple-700 font-medium text-sm flex items-center gap-1">
-                    Open App →
-                </a>
-            </div>
+        <div class="border-t border-white/10 pt-6 flex justify-between items-center">
+            <a href="/" class="text-text-secondary hover:text-text-primary font-medium text-sm flex items-center gap-1 transition-colors">
+                ← <span class="hidden xs:inline">Back to Dashboard</span><span class="xs:hidden">Back</span>
+            </a>
+            <a href="podcasts://open"
+                class="text-primary-400 hover:text-primary-300 font-medium text-sm flex items-center gap-1 transition-colors">
+                Open App →
+            </a>
         </div>
     </div>
 </div>

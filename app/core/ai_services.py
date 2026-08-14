@@ -174,7 +174,8 @@ class Transcriber:
             logger.info(f"Created {len(chunk_paths)} chunks for processing.")
             
             all_segments = []
-            
+            detected_language = None
+
             # Stage 3: Process each chunk
             for i, chunk_path in enumerate(chunk_paths):
                 logger.info(f"Processing chunk {i+1}/{len(chunk_paths)}: {chunk_path}")
@@ -195,7 +196,9 @@ class Transcriber:
                 
                 # Transcribe chunk
                 segments_generator, info = self.model.transcribe(chunk_path, beam_size=5)
-                
+                if detected_language is None:
+                    detected_language = getattr(info, "language", None)
+
                 chunk_segments_count = 0
                 for segment in segments_generator:
                     # Globalize segment timestamps
@@ -230,7 +233,7 @@ class Transcriber:
             result = {
                 "text": "".join([s['text'] for s in all_segments]),
                 "segments": all_segments,
-                "language": "en" # Default or detected from first chunk?
+                "language": detected_language or "en"
             }
             
             logger.info(f"Chunked transcription complete. Found {len(all_segments)} total segments.")
@@ -828,11 +831,13 @@ class AdDetector:
             api_key = api_key.split(',')[0].strip()
             
         try:
-            genai.configure(api_key=api_key)
+            client = genai.Client(api_key=api_key)
             models = []
-            for m in genai.list_models():
-                if 'generateContent' in m.supported_generation_methods:
-                    models.append(m.name.replace('models/', ''))
+            for m in client.models.list():
+                name = m.name
+                if name.startswith('models/'):
+                    name = name.replace('models/', '')
+                models.append(name)
             return models
         except Exception as e:
             logger.error(f"Failed to list Gemini models: {e}")
