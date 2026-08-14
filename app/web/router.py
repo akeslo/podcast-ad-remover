@@ -637,13 +637,22 @@ async def view_settings_redirect():
 # --- Admin: System ---
 @router.get("/admin/system", response_class=HTMLResponse, dependencies=[Depends(require_admin_action)])
 async def admin_system(request: Request):
+    from app.core.config import settings as env_settings
+
     user = get_current_user(request)
     return templates.TemplateResponse(request, "admin/system.html", {
         "csp_nonce": get_csp_nonce(request),
         "user": user,
         "settings": get_global_settings(),
         "pending_requests_count": get_pending_requests_count(),
-        "active_tab": "system"
+        "active_tab": "system",
+        # Whether the .env fallback is populated, so the page can say what
+        # blank fields will actually fall back to. The values themselves are
+        # never rendered - only whether they exist.
+        "podcast_index_env_configured": bool(
+            env_settings.PODCAST_INDEX_API_KEY
+            and env_settings.PODCAST_INDEX_API_SECRET
+        ),
     })
 
 @router.post("/admin/system/update", dependencies=[Depends(require_admin_action)])
@@ -658,9 +667,15 @@ async def update_system_settings(
     enable_feed_auth: bool = Form(False),
     feed_auth_username: str = Form(None),
     feed_auth_password: str = Form(None),
+    podcast_index_api_key: str = Form(None),
+    podcast_index_api_secret: str = Form(None),
     redirect_to: str = Form(None)
 ):
-    from app.infra.database import get_db_connection, ensure_global_feed_token
+    from app.infra.database import (
+        clear_discovery_cache,
+        ensure_global_feed_token,
+        get_db_connection,
+    )
 
     # The submitted feed password is deliberately ignored and never stored.
     # Feed access is authenticated by a random feed token, not by any
@@ -713,7 +728,22 @@ async def update_system_settings(
         # Check if app_external_url is changing
         old_url = conn.execute("SELECT app_external_url FROM app_settings WHERE id = 1").fetchone()
         url_changed = old_url and old_url['app_external_url'] != app_external_url
-        
+
+        # Discovery credentials. Blank means "unset" (fall back to .env), not
+        # "leave alone" - otherwise there is no way to clear a wrong key from
+        # the UI. Whitespace is stripped because a stray trailing space in an
+        # API secret produces a signature that fails with no useful error.
+        pi_key = (podcast_index_api_key or "").strip() or None
+        pi_secret = (podcast_index_api_secret or "").strip() or None
+        old_creds = conn.execute(
+            "SELECT podcast_index_api_key, podcast_index_api_secret "
+            "FROM app_settings WHERE id = 1"
+        ).fetchone()
+        creds_changed = bool(old_creds) and (
+            old_creds["podcast_index_api_key"] != pi_key
+            or old_creds["podcast_index_api_secret"] != pi_secret
+        )
+
         # Update settings
         conn.execute("""
             UPDATE app_settings SET concurrent_downloads = ?,
@@ -724,14 +754,23 @@ async def update_system_settings(
                 ip_allowlist = ?,
                 enable_feed_auth = ?,
                 feed_auth_username = ?,
+                podcast_index_api_key = ?,
+                podcast_index_api_secret = ?,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = 1
         """, (concurrent_downloads, retention_days, check_interval_minutes, app_external_url,
               1 if auth_enabled else 0, ip_allowlist,
               1 if enable_feed_auth else 0,
-              feed_auth_username if feed_auth_username else None))
+              feed_auth_username if feed_auth_username else None,
+              pi_key, pi_secret))
         conn.commit()
-    
+
+    # Cached discovery payloads were fetched with the previous credentials and
+    # would keep being served for up to the full TTL, which reads as "the new
+    # key changed nothing".
+    if creds_changed:
+        clear_discovery_cache()
+
     # Regenerate all feeds if the URL changed
     if url_changed:
         try:

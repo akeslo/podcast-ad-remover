@@ -111,6 +111,23 @@ The summary must:
 3. Briefly summarize key topics.
 Transcript Context: {transcript_context}""",))
 
+    # Discovery Cache Table
+    #
+    # Read-through cache for Podcast Index discovery payloads (trending, the
+    # category list, per-category listings). Deliberately its own table:
+    # discovery results are not-yet-subscribed podcasts, and `subscriptions`
+    # is read unfiltered by the dashboard and by the processor's feed-check
+    # loop, so parking them there would show them as subscriptions and poll
+    # them. Rows here are disposable - dropping the table only costs one
+    # upstream fetch.
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS discovery_cache (
+        cache_key TEXT PRIMARY KEY,
+        payload TEXT NOT NULL,
+        fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
     # Users Table
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS users (
@@ -266,7 +283,14 @@ Transcript Context: {transcript_context}""",))
         # feed_auth_password is intentionally NOT dropped here - removing it
         # is a separate change.
         "ALTER TABLE users ADD COLUMN feed_token TEXT",
-        "ALTER TABLE app_settings ADD COLUMN feed_auth_token TEXT"
+        "ALTER TABLE app_settings ADD COLUMN feed_auth_token TEXT",
+
+        # Podcast Index (discovery) credentials. Operator-editable from
+        # Admin - System; `.env` (PODCAST_INDEX_API_KEY / _SECRET) seeds an
+        # install and is the fallback when these are empty, mirroring how the
+        # AI provider keys resolve.
+        "ALTER TABLE app_settings ADD COLUMN podcast_index_api_key TEXT",
+        "ALTER TABLE app_settings ADD COLUMN podcast_index_api_secret TEXT"
     ]
 
     for sql in migrations:
@@ -382,6 +406,65 @@ def get_db_connection():
 # retrievably (not hashed) on purpose - see the comment on users.feed_token in
 # init_db(). Treat them like API keys: never log them.
 # ---------------------------------------------------------------------------
+
+def get_discovery_cache(cache_key: str, ttl_seconds: int):
+    """Return a cached discovery payload, or None when absent or stale.
+
+    Staleness is computed in SQL against the row's own `fetched_at` so the
+    comparison uses the same clock that wrote it. A row that fails to parse as
+    JSON is treated as a miss rather than an error: the cache is disposable,
+    and a corrupt entry must never take the feature down.
+    """
+    import json
+
+    try:
+        with get_db_connection() as conn:
+            row = conn.execute(
+                "SELECT payload FROM discovery_cache "
+                "WHERE cache_key = ? "
+                "AND fetched_at >= datetime('now', ?)",
+                (cache_key, f"-{int(ttl_seconds)} seconds"),
+            ).fetchone()
+    except sqlite3.Error:
+        return None
+
+    if not row:
+        return None
+    try:
+        return json.loads(row["payload"])
+    except (ValueError, TypeError):
+        return None
+
+
+def set_discovery_cache(cache_key: str, payload) -> None:
+    """Store (or refresh) a discovery payload under `cache_key`."""
+    import json
+
+    with get_db_connection() as conn:
+        conn.execute(
+            "INSERT INTO discovery_cache (cache_key, payload, fetched_at) "
+            "VALUES (?, ?, CURRENT_TIMESTAMP) "
+            "ON CONFLICT(cache_key) DO UPDATE SET "
+            "payload = excluded.payload, fetched_at = CURRENT_TIMESTAMP",
+            (cache_key, json.dumps(payload)),
+        )
+        conn.commit()
+
+
+def clear_discovery_cache() -> None:
+    """Drop every cached discovery payload.
+
+    Called when the Podcast Index credentials change: entries fetched with the
+    old key would otherwise stay served for up to the full TTL, which reads as
+    "the new key did nothing".
+    """
+    try:
+        with get_db_connection() as conn:
+            conn.execute("DELETE FROM discovery_cache")
+            conn.commit()
+    except sqlite3.Error:
+        pass
+
 
 def get_feed_token(user_id: int) -> Optional[str]:
     """Return the user's feed token, or None if they have none."""

@@ -53,6 +53,36 @@
         </div>
     </div>
 
+    <!-- Podcast Discovery -->
+    <div>
+        <h4 class="text-lg font-medium border-b border-white/[0.08] pb-2 mb-4 mt-6">Podcast Discovery</h4>
+        <p class="text-xs text-text-muted mb-4">
+            Credentials for the <a href="https://api.podcastindex.org/signup" target="_blank" rel="noopener noreferrer"
+                class="text-primary-400 hover:underline">Podcast Index API</a> (free), which powers podcast search and
+            the Trending and Browse tabs on the dashboard.
+            {% if podcast_index_env_configured %}
+            Values set here override <code>PODCAST_INDEX_API_KEY</code> / <code>PODCAST_INDEX_API_SECRET</code>
+            from the environment, which are currently set. Leave both blank to keep using those.
+            {% else %}
+            Without them, search falls back to the iTunes directory and the Trending and Browse tabs stay empty.
+            {% endif %}
+        </p>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+                <label class="block text-sm font-medium text-text-secondary mb-2">API Key</label>
+                <input type="text" name="podcast_index_api_key" autocomplete="off"
+                    value="{{ settings.podcast_index_api_key or '' }}" placeholder="Podcast Index API key"
+                    class="input">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-text-secondary mb-2">API Secret</label>
+                <input type="password" name="podcast_index_api_secret" autocomplete="new-password"
+                    value="{{ settings.podcast_index_api_secret or '' }}" placeholder="Podcast Index API secret"
+                    class="input">
+            </div>
+        </div>
+    </div>
+
     <div class="flex justify-end pt-4 border-t border-white/[0.08] mt-6">
         <!-- Hidden fields to preserve Auth/Access settings -->
         <input type="hidden" name="auth_enabled" value="{% if settings.auth_enabled %}on{% endif %}">

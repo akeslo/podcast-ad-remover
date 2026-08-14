@@ -9,6 +9,12 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str | None = Field(None, description="OpenAI API Key")
     ANTHROPIC_API_KEY: str | None = Field(None, description="Anthropic API Key")
     OPENROUTER_API_KEY: str | None = Field(None, description="OpenRouter API Key")
+    # Podcast Index (api.podcastindex.org) credentials, used for podcast
+    # search and the trending/browse discovery surfaces. These seed an
+    # install; the operator-editable values in app_settings take precedence
+    # once set, exactly as the AI provider keys do.
+    PODCAST_INDEX_API_KEY: str | None = Field(None, description="Podcast Index API key")
+    PODCAST_INDEX_API_SECRET: str | None = Field(None, description="Podcast Index API secret")
     LOG_LEVEL: str = "INFO"
     # No working default: a hardcoded default here is a public secret (it's in
     # this repo's source), so anyone can forge a session cookie against it.
