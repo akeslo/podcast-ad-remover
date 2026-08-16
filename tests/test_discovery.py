@@ -372,6 +372,9 @@ async def test_search_prefers_podcast_index_and_skips_itunes(monkeypatch):
     called = {"itunes": False}
 
     monkeypatch.setattr(discovery, "search", _async_return(_CARDS))
+    monkeypatch.setattr(
+        search_module.PodcastSearcher, "search_youtube", staticmethod(_async_return([]))
+    )
 
     async def _itunes(term, limit=10):
         called["itunes"] = True
@@ -396,6 +399,9 @@ async def test_search_falls_back_to_itunes_when_podcast_index_errors(monkeypatch
         "search_itunes",
         staticmethod(_async_return(_ITUNES_RESULTS)),
     )
+    monkeypatch.setattr(
+        search_module.PodcastSearcher, "search_youtube", staticmethod(_async_return([]))
+    )
 
     assert await search_module.PodcastSearcher.search("anything") == _ITUNES_RESULTS
 
@@ -412,6 +418,9 @@ async def test_search_falls_back_to_itunes_when_podcast_index_is_unconfigured(
         "search_itunes",
         staticmethod(_async_return(_ITUNES_RESULTS)),
     )
+    monkeypatch.setattr(
+        search_module.PodcastSearcher, "search_youtube", staticmethod(_async_return([]))
+    )
 
     assert await search_module.PodcastSearcher.search("anything") == _ITUNES_RESULTS
 
@@ -423,6 +432,9 @@ async def test_search_falls_back_to_itunes_when_podcast_index_is_empty(monkeypat
         search_module.PodcastSearcher,
         "search_itunes",
         staticmethod(_async_return(_ITUNES_RESULTS)),
+    )
+    monkeypatch.setattr(
+        search_module.PodcastSearcher, "search_youtube", staticmethod(_async_return([]))
     )
 
     assert await search_module.PodcastSearcher.search("anything") == _ITUNES_RESULTS
