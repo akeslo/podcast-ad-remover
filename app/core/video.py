@@ -87,10 +87,11 @@ class VideoProcessor:
                 f"[0:a]atrim=start={start}:end={end},asetpts=PTS-STARTPTS[a{i}]"
             )
 
-        # Concatenate all segments
-        v_concat = "".join(f"[v{i}]" for i in range(len(keep_segments)))
-        a_concat = "".join(f"[a{i}]" for i in range(len(keep_segments)))
-        concat_filter = f"{v_concat}{a_concat}concat=n={len(keep_segments)}:v=1:a=1[outv][outa]"
+        # Concatenate all segments. ffmpeg's multi-stream concat filter expects
+        # inputs interleaved per segment ([v0][a0][v1][a1]...), not grouped by
+        # stream type - grouping causes a "media type mismatch" filtergraph error.
+        concat_inputs = "".join(f"[v{i}][a{i}]" for i in range(len(keep_segments)))
+        concat_filter = f"{concat_inputs}concat=n={len(keep_segments)}:v=1:a=1[outv][outa]"
 
         filter_complex = ";".join(video_filters + audio_filters + [concat_filter])
 
