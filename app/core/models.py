@@ -17,20 +17,21 @@ class Subscription(SubscriptionBase):
     is_active: bool
     created_at: datetime
     last_checked_at: Optional[datetime] = None
-    
+    source_type: str = "rss"
+
     # Granular Ad Removal Settings
     remove_ads: bool = True
     remove_promos: bool = True
     remove_intros: bool = False
     remove_outros: bool = False
     custom_instructions: Optional[str] = None
-    
+
     # New Features
     append_summary: bool = False
     append_title_intro: bool = False
     ai_rewrite_description: bool = False
     ai_audio_summary: bool = False
-    
+
     # Retention
     retention_days: Optional[int] = 30
     manual_retention_days: Optional[int] = 14
@@ -62,6 +63,9 @@ class Episode(EpisodeBase):
     report_path: Optional[str] = None
     file_size: Optional[int] = None
     local_filename: Optional[str] = None
+    video_id: Optional[str] = None
+    is_video: bool = False
+    thumbnail_url: Optional[str] = None
 
     class Config:
         from_attributes = True

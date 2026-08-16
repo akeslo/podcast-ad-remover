@@ -1659,25 +1659,30 @@ async def update_global_subscription_settings(
 @router.post("/add", response_class=HTMLResponse, dependencies=[Depends(require_user_action)])
 async def add_subscription(request: Request, background_tasks: BackgroundTasks, feed_url: str = Form(...), initial_count: int = Form(1)):
     try:
+        # Auto-detect YouTube URLs
+        source_type = "rss"
+        if 'youtube.com' in feed_url or 'youtu.be' in feed_url:
+            source_type = "youtube"
+
         # Check if exists (quick DB check)
         existing = sub_repo.get_by_url(feed_url)
         if existing:
             return _render_index(request, error="Subscription already exists")
-        
+
         # Create subscription with placeholder data
         # Fetch global defaults first
         with get_db_connection() as conn:
             app_settings = conn.execute("SELECT * FROM app_settings WHERE id = 1").fetchone()
-            
+
         # Use user-provided initial_count (from UI dropdown) as retention limit
         # The UI defaults this dropdown to the global default setting already.
         retention_limit = initial_count
-        
+
         sub_create = SubscriptionCreate(feed_url=feed_url)
         # Random suffix (not just time.time()) so two subscriptions created in
         # the same second can't collide on the placeholder slug.
         placeholder_slug = f"loading-{int(__import__('time').time())}-{__import__('secrets').token_hex(4)}"
-        new_sub = sub_repo.create(sub_create, "Loading...", placeholder_slug, None, "Fetching feed information...", retention_limit=retention_limit)
+        new_sub = sub_repo.create(sub_create, "Loading...", placeholder_slug, None, "Fetching feed information...", retention_limit=retention_limit, source_type=source_type)
         
         # Apply other global defaults immediately
         sub_repo.update_settings(
@@ -1698,14 +1703,18 @@ async def add_subscription(request: Request, background_tasks: BackgroundTasks, 
 
         
         # All heavy lifting happens in background
-        async def setup_subscription(sub_id: int, url: str, limit: int):
+        async def setup_subscription(sub_id: int, url: str, limit: int, source_type: str):
             from app.core.processor import Processor
             from app.core.feed import FeedManager
+            from app.core.youtube_feed import YouTubeFeedManager
             from app.infra.database import get_db_connection
-            
+
             try:
                 # Parse feed (network call)
-                title, slug, image_url, description = FeedManager.parse_feed(url)
+                if source_type == 'youtube':
+                    title, slug, image_url, description = YouTubeFeedManager.parse_channel(url)
+                else:
+                    title, slug, image_url, description = FeedManager.parse_feed(url)
                 
                 # Update subscription with real data
                 # Keep the settings we just set! Only update metadata.
@@ -1725,7 +1734,7 @@ async def add_subscription(request: Request, background_tasks: BackgroundTasks, 
             except Exception as e:
                 logger.error(f"Error setting up subscription {sub_id}: {e}")
         
-        background_tasks.add_task(setup_subscription, new_sub.id, feed_url, retention_limit)
+        background_tasks.add_task(setup_subscription, new_sub.id, feed_url, retention_limit, source_type)
         
         return RedirectResponse(url="/", status_code=303)
     except Exception as e:

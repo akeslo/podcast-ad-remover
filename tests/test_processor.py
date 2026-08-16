@@ -52,6 +52,7 @@ def make_subscription(**overrides) -> SimpleNamespace:
         id=1,
         slug="test-podcast",
         title="Test Podcast",
+        source_type="rss",
         remove_ads=True,
         remove_promos=True,
         remove_intros=False,

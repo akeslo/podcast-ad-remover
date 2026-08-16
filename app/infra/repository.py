@@ -5,13 +5,13 @@ from app.infra.database import get_db_connection
 from app.core.models import SubscriptionCreate, Subscription, Episode
 
 class SubscriptionRepository:
-    def create(self, sub: SubscriptionCreate, title: str, slug: str, image_url: str = None, description: str = None, retention_limit: int = 1) -> Subscription:
+    def create(self, sub: SubscriptionCreate, title: str, slug: str, image_url: str = None, description: str = None, retention_limit: int = 1, source_type: str = "rss") -> Subscription:
         with get_db_connection() as conn:
             cursor = conn.cursor()
             try:
                 cursor.execute(
-                    "INSERT INTO subscriptions (feed_url, title, slug, image_url, description, retention_limit) VALUES (?, ?, ?, ?, ?, ?)",
-                    (sub.feed_url, title, slug, image_url, description, retention_limit)
+                    "INSERT INTO subscriptions (feed_url, title, slug, image_url, description, retention_limit, source_type) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (sub.feed_url, title, slug, image_url, description, retention_limit, source_type)
                 )
                 sub_id = cursor.lastrowid
                 conn.commit()
@@ -76,10 +76,26 @@ class EpisodeRepository:
         """Returns True if created, False if already exists."""
         with get_db_connection() as conn:
             try:
+                # Ensure video fields have defaults for RSS episodes
+                episode_data = {
+                    'subscription_id': episode['subscription_id'],
+                    'guid': episode['guid'],
+                    'title': episode['title'],
+                    'pub_date': episode.get('pub_date'),
+                    'original_url': episode['original_url'],
+                    'duration': episode.get('duration', 0),
+                    'description': episode.get('description', ''),
+                    'status': episode.get('status', 'pending'),
+                    'file_size': episode.get('file_size', 0),
+                    'video_id': episode.get('video_id'),
+                    'is_video': episode.get('is_video', False),
+                    'thumbnail_url': episode.get('thumbnail_url')
+                }
+
                 conn.execute("""
-                    INSERT INTO episodes (subscription_id, guid, title, pub_date, original_url, duration, description, status, file_size)
-                    VALUES (:subscription_id, :guid, :title, :pub_date, :original_url, :duration, :description, :status, :file_size)
-                """, episode)
+                    INSERT INTO episodes (subscription_id, guid, title, pub_date, original_url, duration, description, status, file_size, video_id, is_video, thumbnail_url)
+                    VALUES (:subscription_id, :guid, :title, :pub_date, :original_url, :duration, :description, :status, :file_size, :video_id, :is_video, :thumbnail_url)
+                """, episode_data)
                 conn.commit()
                 return True
             except sqlite3.IntegrityError:

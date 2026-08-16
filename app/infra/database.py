@@ -47,6 +47,23 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
+    # YouTube support migrations
+    try:
+        cursor.execute("ALTER TABLE subscriptions ADD COLUMN source_type TEXT DEFAULT 'rss'")
+    except sqlite3.OperationalError:
+        pass
+
+    # SponsorBlock settings
+    try:
+        cursor.execute("ALTER TABLE app_settings ADD COLUMN enable_sponsorblock INTEGER DEFAULT 1")
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE app_settings ADD COLUMN sponsorblock_categories TEXT DEFAULT '[\"sponsor\",\"selfpromo\",\"interaction\",\"intro\",\"outro\"]'")
+    except sqlite3.OperationalError:
+        pass
+
 
     # App Settings Singleton Table
     cursor.execute("""
@@ -181,6 +198,17 @@ Transcript Context: {transcript_context}""",))
     )
     """)
 
+    # Listen Log Table (for video view tracking)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS listen_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ip_address TEXT,
+        subscription_slug TEXT,
+        episode_guid_slug TEXT,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
     # Episodes Table
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS episodes (
@@ -290,7 +318,12 @@ Transcript Context: {transcript_context}""",))
         # install and is the fallback when these are empty, mirroring how the
         # AI provider keys resolve.
         "ALTER TABLE app_settings ADD COLUMN podcast_index_api_key TEXT",
-        "ALTER TABLE app_settings ADD COLUMN podcast_index_api_secret TEXT"
+        "ALTER TABLE app_settings ADD COLUMN podcast_index_api_secret TEXT",
+
+        # YouTube support columns
+        "ALTER TABLE episodes ADD COLUMN video_id TEXT",
+        "ALTER TABLE episodes ADD COLUMN is_video BOOLEAN DEFAULT 0",
+        "ALTER TABLE episodes ADD COLUMN thumbnail_url TEXT"
     ]
 
     for sql in migrations:

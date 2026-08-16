@@ -122,14 +122,26 @@ class RSSGenerator:
                     raise ValueError("Path mismatch")
                 # Ensure we use forward slashes for the URL
                 url_path = rel_path.replace(os.sep, '/')
-                url = f"{base_url}/audio/{url_path}"
+
+                # Determine media type and URL based on is_video flag
+                if ep.get('is_video'):
+                    url = f"{base_url}/video/{url_path}"
+                    media_type = 'video/mp4'
+                else:
+                    url = f"{base_url}/audio/{url_path}"
+                    media_type = 'audio/mpeg'
             except Exception:
                 # Fallback to current (potentially broken) logic if path math fails
                 filename = os.path.basename(ep['local_filename'])
-                url = f"{base_url}/audio/{sub.slug}/{filename}"
-                
+                if ep.get('is_video'):
+                    url = f"{base_url}/video/{sub.slug}/{filename}"
+                    media_type = 'video/mp4'
+                else:
+                    url = f"{base_url}/audio/{sub.slug}/{filename}"
+                    media_type = 'audio/mpeg'
+
             enclosure.set('url', url)
-            enclosure.set('type', 'audio/mpeg')
+            enclosure.set('type', media_type)
             if ep['file_size']:
                 enclosure.set('length', str(ep['file_size']))
             
@@ -211,13 +223,25 @@ class RSSGenerator:
                 if rel_path.startswith(".."):
                     raise ValueError("Path mismatch")
                 url_path = rel_path.replace(os.sep, '/')
-                url = f"{base_url}/audio/{url_path}"
+
+                # Determine media type and URL based on is_video flag
+                if ep.get('is_video'):
+                    url = f"{base_url}/video/{url_path}"
+                    media_type = 'video/mp4'
+                else:
+                    url = f"{base_url}/audio/{url_path}"
+                    media_type = 'audio/mpeg'
             except Exception:
                 filename = os.path.basename(ep['local_filename'])
-                url = f"{base_url}/audio/{ep['podcast_slug']}/{filename}"
-                
+                if ep.get('is_video'):
+                    url = f"{base_url}/video/{ep['podcast_slug']}/{filename}"
+                    media_type = 'video/mp4'
+                else:
+                    url = f"{base_url}/audio/{ep['podcast_slug']}/{filename}"
+                    media_type = 'audio/mpeg'
+
             enclosure.set('url', url)
-            enclosure.set('type', 'audio/mpeg')
+            enclosure.set('type', media_type)
             if ep['file_size']:
                 enclosure.set('length', str(ep['file_size']))
             

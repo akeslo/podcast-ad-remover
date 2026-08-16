@@ -13,6 +13,10 @@ from app.core.ai_services import Transcriber, AdDetector, RateLimitError
 from app.core.audio import AudioProcessor
 from app.core.rss_gen import RSSGenerator
 from app.core.feed import FeedManager
+from app.core.youtube_feed import YouTubeFeedManager
+from app.core.video import VideoProcessor
+from app.core.sponsorblock import SponsorBlockClient
+import yt_dlp
 
 logger = logging.getLogger(__name__)
 
@@ -38,39 +42,60 @@ class Processor:
             
         for sub in subs:
             try:
-                # Use subscription limit if set, else default. 
+                # Use subscription limit if set, else default.
                 # Limit of 0 is valid (means skip initial downloads)
                 actual_limit = sub.retention_limit if sub.retention_limit is not None else limit
                 logger.info(f"Checking {sub.title} (Sub Limit: {sub.retention_limit}, Ref Limit: {limit}, Final Limit: {actual_limit})...")
 
-                # Fetch ALL episodes
-                episodes = FeedManager.parse_episodes(sub.feed_url)
-                
-                for i, ep_data in enumerate(episodes):
-                    ep_data['subscription_id'] = sub.id
-                    
-                    # Determine status based on limit
-                    should_be_pending = i < actual_limit
-                    
-                    if should_be_pending:
-                        ep_data['status'] = 'pending'
-                    else:
-                        ep_data['status'] = 'unprocessed'
-                        
-                    # Try to create. If exists, it returns False.
-                    if self.ep_repo.create_or_ignore(ep_data):
+                if sub.source_type == 'youtube':
+                    # YouTube videos
+                    videos = YouTubeFeedManager.parse_videos(sub.feed_url, actual_limit)
+
+                    for i, video_data in enumerate(videos):
+                        video_data['subscription_id'] = sub.id
+                        video_data['is_video'] = True
+
+                        should_be_pending = i < actual_limit
+                        video_data['status'] = 'pending' if should_be_pending else 'unprocessed'
+
+                        if self.ep_repo.create_or_ignore(video_data):
+                            if should_be_pending:
+                                logger.info(f"New YouTube video queued: {video_data['title']}")
+                        else:
+                            if should_be_pending:
+                                self.ep_repo.update_status_by_guid(
+                                    sub.id, video_data['guid'], 'pending',
+                                    condition_status='unprocessed'
+                                )
+                else:
+                    # RSS episodes
+                    episodes = FeedManager.parse_episodes(sub.feed_url)
+
+                    for i, ep_data in enumerate(episodes):
+                        ep_data['subscription_id'] = sub.id
+
+                        # Determine status based on limit
+                        should_be_pending = i < actual_limit
+
                         if should_be_pending:
-                            logger.info(f"New episode queued: {ep_data['title']}")
-                    else:
-                        # Episode exists. Backfill if needed.
-                        # If we want it pending, and it's currently unprocessed (or failed), retry it.
-                        if should_be_pending:
-                            self.ep_repo.update_status_by_guid(
-                                sub.id, 
-                                ep_data['guid'], 
-                                'pending', 
-                                condition_status='unprocessed'
-                            )
+                            ep_data['status'] = 'pending'
+                        else:
+                            ep_data['status'] = 'unprocessed'
+
+                        # Try to create. If exists, it returns False.
+                        if self.ep_repo.create_or_ignore(ep_data):
+                            if should_be_pending:
+                                logger.info(f"New episode queued: {ep_data['title']}")
+                        else:
+                            # Episode exists. Backfill if needed.
+                            # If we want it pending, and it's currently unprocessed (or failed), retry it.
+                            if should_be_pending:
+                                self.ep_repo.update_status_by_guid(
+                                    sub.id,
+                                    ep_data['guid'],
+                                    'pending',
+                                    condition_status='unprocessed'
+                                )
             except Exception as e:
                 logger.error(f"Error checking feed {sub.feed_url}: {e}")
 
@@ -368,40 +393,61 @@ class Processor:
             elif skip_transcription:
                 logger.warning(f"skip_transcription requested for {ep.title} but transcript_path missing or file not found: {ep.transcript_path}")
                 skip_transcription = False
-            # 1. Ensure Audio Exists (Download if missing)
+            # 1. Ensure Media Exists (Download if missing)
             if not os.path.exists(input_path):
                 if not self._check_cancellation(ep): return
-                
-                logger.info(f"Downloading {ep.title}...")
-                
-                async with httpx.AsyncClient() as client:
-                    async with client.stream("GET", ep.original_url, follow_redirects=True, timeout=300.0) as resp:
-                        resp.raise_for_status()
-                        total = int(resp.headers.get("Content-Length", 0))
-                        downloaded = 0
-                        last_logged_percent = -1
-                        last_cancel_check = datetime.now()
-                        
-                        async with aiofiles.open(input_path, "wb") as f:
-                            async for chunk in resp.aiter_bytes():
-                                await f.write(chunk)
-                                downloaded += len(chunk)
-                                
-                                # Periodic cancellation check (Time-based + Percent-based)
-                                if (datetime.now() - last_cancel_check).total_seconds() > 2.0:
-                                     if not self._check_cancellation(ep): return
-                                     last_cancel_check = datetime.now()
 
-                                if total > 0:
-                                    percent = int((downloaded / total) * 100)
-                                    # Log roughly every 5% - advanced-past-threshold rather
-                                    # than exact modulo-5, so a large chunk that jumps e.g.
-                                    # 41% -> 49% still logs instead of skipping the update.
-                                    if percent >= last_logged_percent + 5:
-                                        self.ep_repo.update_progress(ep.id, "downloading", percent)
-                                        logger.info(f"Downloading {ep.title}: {percent}%")
-                                        last_logged_percent = percent
-                
+                if sub.source_type == 'youtube':
+                    # YouTube video download
+                    self.ep_repo.update_progress(ep.id, "Downloading video from YouTube...", 5)
+                    logger.info(f"Downloading YouTube video: {ep.title}...")
+
+                    ydl_opts = {
+                        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+                        'outtmpl': input_path.replace('.mp3', '.mp4'),
+                        'quiet': False,
+                        'no_warnings': False,
+                    }
+
+                    await asyncio.to_thread(
+                        lambda: yt_dlp.YoutubeDL(ydl_opts).download([ep.original_url])
+                    )
+
+                    input_path = input_path.replace('.mp3', '.mp4')
+                    logger.info(f"YouTube video download complete")
+                else:
+                    # RSS audio download
+                    logger.info(f"Downloading {ep.title}...")
+
+                    async with httpx.AsyncClient() as client:
+                        async with client.stream("GET", ep.original_url, follow_redirects=True, timeout=300.0) as resp:
+                            resp.raise_for_status()
+                            total = int(resp.headers.get("Content-Length", 0))
+                            downloaded = 0
+                            last_logged_percent = -1
+                            last_cancel_check = datetime.now()
+
+                            async with aiofiles.open(input_path, "wb") as f:
+                                async for chunk in resp.aiter_bytes():
+                                    await f.write(chunk)
+                                    downloaded += len(chunk)
+
+                                    # Periodic cancellation check (Time-based + Percent-based)
+                                    if (datetime.now() - last_cancel_check).total_seconds() > 2.0:
+                                         if not self._check_cancellation(ep): return
+                                         last_cancel_check = datetime.now()
+
+                                    if total > 0:
+                                        percent = int((downloaded / total) * 100)
+                                        # Log roughly every 5% - advanced-past-threshold rather
+                                        # than exact modulo-5, so a large chunk that jumps e.g.
+                                        # 41% -> 49% still logs instead of skipping the update.
+                                        if percent >= last_logged_percent + 5:
+                                            self.ep_repo.update_progress(ep.id, "downloading", percent)
+                                            logger.info(f"Downloading {ep.title}: {percent}%")
+                                            last_logged_percent = percent
+
+
                 if not self._check_cancellation(ep): return # Check after download
 
                 file_size_mb = os.path.getsize(input_path) / (1024 * 1024)
@@ -450,8 +496,18 @@ class Processor:
                     self.ep_repo.update_progress(ep.id, step, percent)
 
                 try:
+                    # Extract audio if video (for transcription)
+                    audio_for_transcription = input_path
+                    if ep.is_video:
+                        audio_for_transcription = input_path.replace('.mp4', '_audio.wav')
+                        if not os.path.exists(audio_for_transcription):
+                            self.ep_repo.update_progress(ep.id, "Extracting audio for transcription...", 30)
+                            await asyncio.to_thread(
+                                VideoProcessor.extract_audio, input_path, audio_for_transcription
+                            )
+
                     transcript = await asyncio.to_thread(
-                        self.transcriber.transcribe, input_path, progress_callback=transcribe_progress
+                        self.transcriber.transcribe, audio_for_transcription, progress_callback=transcribe_progress
                     )
                 except Exception as e:
                     # Catch cancellation exception from thread
@@ -477,21 +533,44 @@ class Processor:
                     await f.write(json.dumps(transcript))
                 
             self.ep_repo.update_progress(ep.id, "detecting_ads", 50, transcript_path=transcript_path)
-            
+
             if not self._check_cancellation(ep): return
 
-            # 3. Detect Ads
-            logger.info("Detecting ads...")
-            
-            detect_options = {
-                "remove_ads": sub.remove_ads,
-                "remove_promos": sub.remove_promos,
-                "remove_intros": sub.remove_intros,
-                "remove_outros": sub.remove_outros,
-                "custom_instructions": sub.custom_instructions
-            }
-            
-            ad_segments = await asyncio.to_thread(self.ad_detector.detect_ads, transcript, detect_options)
+            # 3. Detect Ads (SponsorBlock for YouTube, AI for everything else)
+            ad_segments = []
+
+            if sub.source_type == 'youtube' and ep.video_id:
+                # Try SponsorBlock first
+                from app.infra.database import get_db_connection
+                with get_db_connection() as conn:
+                    settings_row = conn.execute("SELECT enable_sponsorblock, sponsorblock_categories FROM app_settings WHERE id = 1").fetchone()
+                    enable_sponsorblock = settings_row['enable_sponsorblock'] if settings_row else 1
+                    categories_str = settings_row['sponsorblock_categories'] if settings_row and settings_row['sponsorblock_categories'] else '["sponsor","selfpromo"]'
+                    categories = json.loads(categories_str)
+
+                if enable_sponsorblock:
+                    self.ep_repo.update_progress(ep.id, "Checking SponsorBlock...", 35)
+                    logger.info(f"Checking SponsorBlock for video {ep.video_id}...")
+                    ad_segments = await SponsorBlockClient.get_segments(ep.video_id, categories)
+
+                    if ad_segments:
+                        logger.info(f"Using {len(ad_segments)} SponsorBlock segments")
+                    else:
+                        logger.info("No SponsorBlock data, falling back to AI transcription")
+
+            # Fallback to AI detection if no SponsorBlock data
+            if not ad_segments:
+                logger.info("Detecting ads using AI...")
+
+                detect_options = {
+                    "remove_ads": sub.remove_ads,
+                    "remove_promos": sub.remove_promos,
+                    "remove_intros": sub.remove_intros,
+                    "remove_outros": sub.remove_outros,
+                    "custom_instructions": sub.custom_instructions
+                }
+
+                ad_segments = await asyncio.to_thread(self.ad_detector.detect_ads, transcript, detect_options)
             
             if not self._check_cancellation(ep): return
 
@@ -661,16 +740,29 @@ class Processor:
             if not self._check_cancellation(ep): return
 
             # 4. Remove Ads
-            output_path = os.path.join(episode_dir, "processed.mp3")
-            
-            logger.info("Removing ads with FFmpeg...")
-            await asyncio.to_thread(
-                AudioProcessor.remove_segments, 
-                input_path, 
-                output_path, 
-                ad_segments
-            )
-            logger.info(f"Saved cleaned audio to {output_path}")
+            if ep.is_video:
+                output_path = os.path.join(episode_dir, "processed.mp4")
+                self.ep_repo.update_progress(ep.id, "Removing ads from video...", 75)
+
+                logger.info("Removing ads from video with FFmpeg...")
+                await asyncio.to_thread(
+                    VideoProcessor.remove_segments,
+                    input_path,
+                    output_path,
+                    ad_segments
+                )
+                logger.info(f"Saved cleaned video to {output_path}")
+            else:
+                output_path = os.path.join(episode_dir, "processed.mp3")
+
+                logger.info("Removing ads with FFmpeg...")
+                await asyncio.to_thread(
+                    AudioProcessor.remove_segments,
+                    input_path,
+                    output_path,
+                    ad_segments
+                )
+                logger.info(f"Saved cleaned audio to {output_path}")
             
             # 4.5 Generate & Append Summary (If enabled)
             
