@@ -83,13 +83,32 @@ class YouTubeFeedManager:
                         logger.warning(f"Skipping invalid video ID: {video_id} (likely a playlist or channel ID)")
                         continue
 
-                    # Parse upload date
+                    # Parse upload date. `extract_flat` mode (used above) never
+                    # populates `upload_date` - it's only filled in by a full,
+                    # per-video extraction, which this deliberately avoids for
+                    # speed. Try the flat-mode timestamp fields first, and
+                    # fall back to "now" rather than leaving pub_date null:
+                    # a missing <pubDate> in the generated RSS is silently
+                    # dropped, and some podcast clients (Pocket Casts
+                    # confirmed) refuse to play an episode with no publish
+                    # date at all.
                     pub_date = None
                     if entry.get('upload_date'):
                         try:
                             pub_date = datetime.strptime(entry['upload_date'], '%Y%m%d')
-                        except:
+                        except Exception:
                             pass
+                    if pub_date is None:
+                        for ts_field in ('release_timestamp', 'timestamp'):
+                            ts = entry.get(ts_field)
+                            if ts:
+                                try:
+                                    pub_date = datetime.fromtimestamp(ts)
+                                    break
+                                except Exception:
+                                    pass
+                    if pub_date is None:
+                        pub_date = datetime.now()
 
                     video_data = {
                         'guid': video_id,
