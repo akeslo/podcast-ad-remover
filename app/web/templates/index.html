@@ -111,6 +111,11 @@
                     Search
                 </button>
             </div>
+            <div id="search-source-filter" class="hidden flex gap-2 mt-3" role="tablist" aria-label="Filter search results by source">
+                <button type="button" class="search-filter-tab btn btn-primary btn-sm" data-filter="all" aria-pressed="true">All</button>
+                <button type="button" class="search-filter-tab btn btn-ghost btn-sm" data-filter="podcast" aria-pressed="false">Podcasts</button>
+                <button type="button" class="search-filter-tab btn btn-ghost btn-sm" data-filter="youtube" aria-pressed="false">YouTube</button>
+            </div>
             <div id="search-results" class="mt-4 space-y-3"></div>
         </div>
 
@@ -502,14 +507,25 @@
         const options = optionsHtml !== undefined ? optionsHtml : retentionOptionsHtml();
         const el = document.createElement('div');
         el.className = 'flex flex-col sm:flex-row sm:items-center gap-4 p-4 bg-surface-base rounded-xl border border-white/[0.06] hover:border-primary-500/30 transition-colors';
+
+        // YouTube results carry a channel_url - clicking the thumbnail/title
+        // opens the channel on YouTube itself (a preview before adding),
+        // same as clicking a podcast result's artwork would do nothing
+        // (podcasts have no comparable single-page destination to send to).
+        const isYouTube = pod.source_type === 'youtube' && pod.channel_url;
+        const infoOpenTag = isYouTube
+            ? `<a href="${escapeHtml(pod.channel_url)}" target="_blank" rel="noopener noreferrer" class="flex items-center gap-4 flex-1 min-w-0 hover:opacity-80 transition-opacity">`
+            : `<div class="flex items-center gap-4 flex-1 min-w-0">`;
+        const infoCloseTag = isYouTube ? '</a>' : '</div>';
+
         el.innerHTML = `
-                <div class="flex items-center gap-4 flex-1 min-w-0">
+                ${infoOpenTag}
                     <img src="${escapeHtml(pod.image)}" class="w-14 h-14 shrink-0 rounded-lg object-cover bg-surface-hover">
                     <div class="min-w-0">
                         <h4 class="font-bold text-sm sm:truncate">${escapeHtml(pod.title)}</h4>
                         <p class="text-xs text-text-muted line-clamp-2 sm:truncate">${escapeHtml(pod.description)}</p>
                     </div>
-                </div>
+                ${infoCloseTag}
                 <form action="/add" method="post" class="flex items-center gap-2 sm:shrink-0">
                     <input type="hidden" name="feed_url" value="${escapeHtml(pod.feed_url)}">
                     <select name="initial_count" class="select text-sm py-2 min-w-[80px]" aria-label="Episodes to download">
@@ -538,10 +554,35 @@
     // --- Search -----------------------------------------------------------
 
     let _searchAbortController = null;
+    let _lastSearchResults = [];
+    let _activeSourceFilter = 'all';
+
+    function applySourceFilter() {
+        const resultsDiv = document.getElementById('search-results');
+        const filtered = _activeSourceFilter === 'all'
+            ? _lastSearchResults
+            : _lastSearchResults.filter(pod => pod.source_type === _activeSourceFilter);
+        renderPodcastList(resultsDiv, filtered, 'No results in this category.');
+    }
+
+    const searchFilterTabs = document.querySelectorAll('#search-source-filter .search-filter-tab');
+    searchFilterTabs.forEach(tab => {
+        tab.addEventListener('click', () => {
+            _activeSourceFilter = tab.dataset.filter;
+            searchFilterTabs.forEach(t => {
+                const active = t === tab;
+                t.classList.toggle('btn-primary', active);
+                t.classList.toggle('btn-ghost', !active);
+                t.setAttribute('aria-pressed', active ? 'true' : 'false');
+            });
+            applySourceFilter();
+        });
+    });
 
     async function searchPodcasts() {
         const query = document.getElementById('search-input').value;
         const resultsDiv = document.getElementById('search-results');
+        const filterRow = document.getElementById('search-source-filter');
 
         if (!query) return;
 
@@ -549,6 +590,7 @@
         const isYouTubeURL = query.includes('youtube.com') || query.includes('youtu.be');
 
         if (isYouTubeURL) {
+            filterRow.classList.add('hidden');
             // Show YouTube channel add form directly
             const limits = [0, 1, 3, 5, 10];
             if (!limits.includes(GLOBAL_RETENTION_DEFAULT)) limits.push(GLOBAL_RETENTION_DEFAULT);
@@ -593,6 +635,7 @@
         _searchAbortController = new AbortController();
         const { signal } = _searchAbortController;
 
+        filterRow.classList.add('hidden');
         renderMessage(resultsDiv, 'Searching...', false);
 
         try {
@@ -603,7 +646,22 @@
                 signal
             });
             const data = await res.json();
-            renderPodcastList(resultsDiv, data, 'No results found.');
+            _lastSearchResults = Array.isArray(data) ? data : [];
+
+            // Reset to "All" on every fresh search - a filter chosen for the
+            // previous query shouldn't silently hide results of a new one.
+            _activeSourceFilter = 'all';
+            searchFilterTabs.forEach(t => {
+                const active = t.dataset.filter === 'all';
+                t.classList.toggle('btn-primary', active);
+                t.classList.toggle('btn-ghost', !active);
+                t.setAttribute('aria-pressed', active ? 'true' : 'false');
+            });
+
+            const hasYouTubeResults = _lastSearchResults.some(pod => pod.source_type === 'youtube');
+            filterRow.classList.toggle('hidden', !hasYouTubeResults);
+
+            applySourceFilter();
         } catch (e) {
             if (e.name === 'AbortError') return;
             renderMessage(resultsDiv, 'Search failed. Please try again.', true);

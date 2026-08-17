@@ -35,6 +35,8 @@ async def test_search_youtube_dedupes_by_channel():
 
     assert [r["title"] for r in results] == ["YT: Show A", "YT: Show B"]
     assert results[0]["feed_url"] == "https://www.youtube.com/channel/UC_A/videos"
+    assert results[0]["channel_url"] == "https://www.youtube.com/channel/UC_A"
+    assert results[0]["source_type"] == "youtube"
 
 
 @pytest.mark.asyncio
@@ -67,12 +69,15 @@ async def test_search_blends_podcast_and_youtube_results():
     podcast_results = [{"title": "A Podcast", "feed_url": "https://feeds.example/a.xml",
                          "image": "", "description": ""}]
     youtube_results = [{"title": "YT: A Channel", "feed_url": "https://www.youtube.com/channel/UC_X/videos",
-                         "image": "", "description": "YouTube channel"}]
+                         "channel_url": "https://www.youtube.com/channel/UC_X",
+                         "image": "", "description": "YouTube channel", "source_type": "youtube"}]
 
     with patch("app.core.discovery.search", new=AsyncMock(return_value=podcast_results)), \
          patch.object(PodcastSearcher, "search_youtube", new=AsyncMock(return_value=youtube_results)):
         results = await PodcastSearcher.search("test")
 
+    assert results[0]["source_type"] == "podcast"
+    assert results[1] == youtube_results[0]
     assert results == podcast_results + youtube_results
 
 

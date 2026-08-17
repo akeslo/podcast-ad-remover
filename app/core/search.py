@@ -59,6 +59,13 @@ class PodcastSearcher:
             )
             results = await PodcastSearcher.search_itunes(term, limit=limit)
 
+        # Tag here rather than at each source - discovery.search() and
+        # search_itunes() both predate the YouTube blend and their result
+        # dicts are shared with the trending/browse routes, which have no
+        # concept of source_type.
+        for r in results:
+            r.setdefault("source_type", "podcast")
+
         youtube_results = await PodcastSearcher.search_youtube(
             term, limit=PodcastSearcher.YOUTUBE_RESULT_LIMIT
         )
@@ -155,10 +162,15 @@ class PodcastSearcher:
                     "title": f"YT: {title}",
                     # /add's source_type detection matches on the URL text
                     # (app/web/router.py), so a plain channel URL is enough -
-                    # no separate source_type field needs to travel with it.
+                    # no separate source_type field needs to travel with it
+                    # for the add flow. "source_type"/"channel_url" below are
+                    # for the frontend (source filter, click-through to
+                    # YouTube) and aren't read by /add.
                     "feed_url": channel_url.rstrip("/") + "/videos",
+                    "channel_url": channel_url,
                     "image": image,
                     "description": "YouTube channel",
+                    "source_type": "youtube",
                 })
                 if len(results) >= limit:
                     break
