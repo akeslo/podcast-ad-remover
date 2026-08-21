@@ -1156,7 +1156,7 @@ def start_processor_process():
     try:
         os.nice(10)
     except Exception as e:
-        print(f"Failed to set background priority: {e}")
+        logging.getLogger(__name__).warning(f"Failed to set background priority: {e}")
 
     # 2. Setup isolated event loop
     loop = asyncio.new_event_loop()
@@ -1168,7 +1168,7 @@ def start_processor_process():
     stop_event = asyncio.Event()
     
     def handle_stop():
-        print("Background processor receiving stop signal...")
+        logging.getLogger(__name__).info("Background processor receiving stop signal...")
         stop_event.set()
         
     for sig in (signal.SIGTERM, signal.SIGINT):
@@ -1186,7 +1186,7 @@ def start_processor_process():
             await runner
         except asyncio.CancelledError:
             pass
-        print("Background processor stopped clean.")
+        logging.getLogger(__name__).info("Background processor stopped clean.")
 
     try:
         loop.run_until_complete(run_until_stopped())
