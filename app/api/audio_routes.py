@@ -137,9 +137,11 @@ async def serve_audio(path: str, request: Request):
     elif file_path.suffix.lower() == ".wav":
         media_type = "audio/wav"
     
-    # Use FileResponse which handles Range requests automatically
+    # Use FileResponse which handles Range requests automatically. Explicit
+    # inline disposition - see video_routes.py's serve_video for why.
     return FileResponse(
         path=file_path,
         media_type=media_type,
-        filename=file_path.name
+        filename=file_path.name,
+        content_disposition_type="inline"
     )

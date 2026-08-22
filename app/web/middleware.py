@@ -112,8 +112,13 @@ def _b64_decode(value: str):
 #: the unified feed (``/feed/unified``, ``/feed/unified.xml``) and any future
 #: route under it are gated by this middleware rather than by a hand-rolled
 #: check inside the route - two independently maintained gates had already
-#: drifted apart on which transports they accept.
-_PROTECTED_PREFIXES = ('/feeds/', '/audio/', '/feed/')
+#: drifted apart on which transports they accept. ``/video/`` was missing
+#: here entirely (2026-08-22): the *other* auth gate in app/web/auth.py used
+#: to reject it outright (redirect loop, video never played), and adding it
+#: to that gate's public-path exemption without also adding it here would
+#: have left video files served to anyone with the URL, no token required -
+#: the two gates must move together for every media prefix.
+_PROTECTED_PREFIXES = ('/feeds/', '/audio/', '/feed/', '/video/')
 
 
 async def feed_auth_middleware(request: Request, call_next):

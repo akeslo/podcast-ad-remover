@@ -186,6 +186,16 @@ def test_audio_path_is_also_gated(feed_auth):
     assert call_middleware(path="/audio/whatever.mp3", query="auth=" + GLOBAL_TOKEN) is ALLOWED
 
 
+def test_video_path_is_also_gated(feed_auth):
+    """/video/ must be gated the same as /audio/ - added 2026-08-22 after it
+    was found completely unauthenticated. It had been rejected by the other
+    auth gate (app.web.auth's PUBLIC_PREFIXES) instead, which looked like a
+    login redirect loop rather than the missing-from-this-list bug it was."""
+    feed_auth()
+    assert call_middleware(path="/video/whatever.mp4").status_code == 401
+    assert call_middleware(path="/video/whatever.mp4", query="auth=" + GLOBAL_TOKEN) is ALLOWED
+
+
 def test_end_to_end_unauthenticated_feed_request_401s(client, feed_auth):
     """Same denial, through the real ASGI stack rather than a bare call."""
     feed_auth()

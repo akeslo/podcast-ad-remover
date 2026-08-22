@@ -128,9 +128,14 @@ async def serve_video(path: str, request: Request):
     elif file_path.suffix.lower() == ".mkv":
         media_type = "video/x-matroska"
 
-    # Use FileResponse which handles Range requests automatically
+    # Use FileResponse which handles Range requests automatically. Explicit
+    # inline disposition: FileResponse defaults to "attachment" whenever a
+    # filename is passed, which tells a podcast client to download the file
+    # rather than stream it in the player - Pocket Casts silently refuses to
+    # play a video enclosure served that way.
     return FileResponse(
         path=file_path,
         media_type=media_type,
-        filename=file_path.name
+        filename=file_path.name,
+        content_disposition_type="inline"
     )
