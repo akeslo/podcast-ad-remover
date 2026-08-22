@@ -169,7 +169,7 @@ async def auth_middleware(request: Request, call_next):
     # "/feed/" and would be silently made public by a looser prefix such as
     # "/feed". Do not drop the slashes.
     PUBLIC_PATHS = ("/login", "/request-access", "/submit-access-request")
-    PUBLIC_PREFIXES = ("/static/", "/feeds/", "/feed/", "/audio/")
+    PUBLIC_PREFIXES = ("/static/", "/feeds/", "/feed/", "/audio/", "/video/")
     if path in PUBLIC_PATHS or path.startswith(PUBLIC_PREFIXES):
         return await call_next(request)
     
