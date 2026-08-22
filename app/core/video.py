@@ -162,6 +162,77 @@ class VideoProcessor:
         return cmd
 
     @staticmethod
+    def probe_resolution(file_path: str) -> tuple:
+        """(width, height) of the first video stream."""
+        cmd = [
+            "ffprobe", "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=width,height",
+            "-of", "csv=s=x:p=0",
+            file_path,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        width, height = result.stdout.strip().split("x")
+        return int(width), int(height)
+
+    @staticmethod
+    def concat_with_audio_intros(output_path: str, video_path: str, intro_audio_paths: List[str]):
+        """Prepend audio-only intro/summary clips (TTS-generated mp3s) to a video
+        episode. AudioProcessor.concat_files can't be reused here: its filter graph is
+        `v=0:a=1`, so running a video episode through it silently drops the video
+        stream - the output keeps a .mp4 name but is audio-only. Each intro clip has
+        no video of its own, so a matching black-frame video track is synthesized for
+        it (sized to the source video) and concatenated alongside the audio.
+        """
+        if not intro_audio_paths:
+            subprocess.run(["ffmpeg", "-y", "-i", video_path, "-c", "copy", output_path], check=True)
+            return
+
+        width, height = VideoProcessor.probe_resolution(video_path)
+
+        cmd = ["ffmpeg", "-y"]
+        for audio_path in intro_audio_paths:
+            duration = VideoProcessor.get_duration(audio_path)
+            cmd += ["-f", "lavfi", "-t", str(duration), "-i", f"color=c=black:s={width}x{height}:r=30"]
+            cmd += ["-i", audio_path]
+        cmd += ["-i", video_path]
+
+        filter_parts = []
+        concat_inputs = []
+        n = len(intro_audio_paths) + 1
+
+        for i in range(len(intro_audio_paths)):
+            v_idx = i * 2
+            a_idx = i * 2 + 1
+            filter_parts.append(f"[{v_idx}:v]setpts=PTS-STARTPTS[v{i}]")
+            filter_parts.append(f"[{a_idx}:a]aformat=sample_rates=44100:channel_layouts=stereo,asetpts=PTS-STARTPTS[a{i}]")
+            concat_inputs.append(f"[v{i}][a{i}]")
+
+        main_i = len(intro_audio_paths)
+        main_idx = main_i * 2
+        filter_parts.append(f"[{main_idx}:v]setpts=PTS-STARTPTS[v{main_i}]")
+        filter_parts.append(f"[{main_idx}:a]aformat=sample_rates=44100:channel_layouts=stereo,asetpts=PTS-STARTPTS[a{main_i}]")
+        concat_inputs.append(f"[v{main_i}][a{main_i}]")
+
+        concat_filter = "".join(concat_inputs) + f"concat=n={n}:v=1:a=1[outv][outa]"
+        full_filter = ";".join(filter_parts + [concat_filter])
+
+        cmd += [
+            "-filter_complex", full_filter,
+            "-map", "[outv]", "-map", "[outa]",
+            "-c:v", "libx264", "-preset", X264_PRESET, "-crf", X264_CRF,
+            "-c:a", "aac", "-b:a", str(AUDIO_BITRATE),
+            output_path,
+        ]
+
+        try:
+            subprocess.run(cmd, check=True, capture_output=True)
+            logger.info(f"Prepended {len(intro_audio_paths)} intro(s) to video: {output_path}")
+        except subprocess.CalledProcessError as e:
+            logger.error(f"FFmpeg intro-concat failed: {e.stderr.decode()}")
+            raise
+
+    @staticmethod
     def remove_segments(input_path: str, output_path: str, remove_segments: List[Dict[str, float]]):
         """
         Remove specified segments from video (both video and audio streams).

@@ -836,19 +836,29 @@ class Processor:
                 # C. Prepend Intros to Episode
                 if intro_files:
                     # Rename current output to use as input
-                    temp_clean_path = output_path + ".tmp.mp3"
+                    temp_clean_path = output_path + (".tmp.mp4" if ep.is_video else ".tmp.mp3")
                     if os.path.exists(output_path):
                         os.rename(output_path, temp_clean_path)
-                        
-                        # Combine: [Intro, Summary, Episode]
-                        concat_list = intro_files + [temp_clean_path]
-                        
-                        await asyncio.to_thread(
-                            AudioProcessor.concat_files,
-                            output_path,
-                            concat_list
-                        )
-                        
+
+                        # Combine: [Intro, Summary, Episode]. Video episodes need the
+                        # video-aware concat - AudioProcessor.concat_files' filter graph
+                        # is v=0:a=1 and would silently strip the video stream even
+                        # though output_path keeps its .mp4 name.
+                        if ep.is_video:
+                            await asyncio.to_thread(
+                                VideoProcessor.concat_with_audio_intros,
+                                output_path,
+                                temp_clean_path,
+                                intro_files
+                            )
+                        else:
+                            concat_list = intro_files + [temp_clean_path]
+                            await asyncio.to_thread(
+                                AudioProcessor.concat_files,
+                                output_path,
+                                concat_list
+                            )
+
                         # Cleanup
                         os.remove(temp_clean_path)
                         for f in intro_files:
