@@ -14,4 +14,4 @@ aiofiles>=23.2.0
 piper-tts==1.2.0; sys_platform == "linux"
 bcrypt
 itsdangerous
-yt-dlp>=2024.0.0
+yt-dlp>=2026.8.19
