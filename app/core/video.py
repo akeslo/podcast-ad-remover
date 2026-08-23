@@ -1,7 +1,7 @@
 import subprocess
 import logging
 import os
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -176,24 +176,43 @@ class VideoProcessor:
         return int(width), int(height)
 
     @staticmethod
-    def concat_with_audio_intros(output_path: str, video_path: str, intro_audio_paths: List[str]):
+    def concat_with_audio_intros(
+        output_path: str,
+        video_path: str,
+        intro_audio_paths: List[str],
+        intro_still_images: Optional[List[Optional[str]]] = None,
+    ):
         """Prepend audio-only intro/summary clips (TTS-generated mp3s) to a video
         episode. AudioProcessor.concat_files can't be reused here: its filter graph is
         `v=0:a=1`, so running a video episode through it silently drops the video
         stream - the output keeps a .mp4 name but is audio-only. Each intro clip has
-        no video of its own, so a matching black-frame video track is synthesized for
-        it (sized to the source video) and concatenated alongside the audio.
+        no video of its own, so a video track is synthesized for it (sized to the
+        source video) and concatenated alongside the audio: a solid black frame by
+        default, or a looped still image (e.g. podcast cover art) when
+        `intro_still_images[i]` names a local file - this is how the AI-summary clip
+        gets the show's artwork instead of dead black.
+
+        `intro_still_images`, when given, must be the same length as
+        `intro_audio_paths`; `None` at an index falls back to black for that clip.
         """
         if not intro_audio_paths:
             subprocess.run(["ffmpeg", "-y", "-i", video_path, "-c", "copy", output_path], check=True)
             return
 
+        if intro_still_images is None:
+            intro_still_images = [None] * len(intro_audio_paths)
+        elif len(intro_still_images) != len(intro_audio_paths):
+            raise ValueError("intro_still_images must be the same length as intro_audio_paths")
+
         width, height = VideoProcessor.probe_resolution(video_path)
 
         cmd = ["ffmpeg", "-y"]
-        for audio_path in intro_audio_paths:
+        for audio_path, still_image in zip(intro_audio_paths, intro_still_images):
             duration = VideoProcessor.get_duration(audio_path)
-            cmd += ["-f", "lavfi", "-t", str(duration), "-i", f"color=c=black:s={width}x{height}:r=30"]
+            if still_image and os.path.exists(still_image):
+                cmd += ["-loop", "1", "-framerate", "30", "-t", str(duration), "-i", still_image]
+            else:
+                cmd += ["-f", "lavfi", "-t", str(duration), "-i", f"color=c=black:s={width}x{height}:r=30"]
             cmd += ["-i", audio_path]
         cmd += ["-i", video_path]
 
@@ -201,10 +220,20 @@ class VideoProcessor:
         concat_inputs = []
         n = len(intro_audio_paths) + 1
 
-        for i in range(len(intro_audio_paths)):
+        for i, still_image in enumerate(intro_still_images):
             v_idx = i * 2
             a_idx = i * 2 + 1
-            filter_parts.append(f"[{v_idx}:v]setpts=PTS-STARTPTS[v{i}]")
+            if still_image and os.path.exists(still_image):
+                # Scale-and-pad the still to the episode's own resolution, preserving
+                # aspect ratio (cover art is rarely the same ratio as the video), then
+                # letterbox onto a black canvas of the exact target size.
+                filter_parts.append(
+                    f"[{v_idx}:v]scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                    f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,"
+                    f"setpts=PTS-STARTPTS[v{i}]"
+                )
+            else:
+                filter_parts.append(f"[{v_idx}:v]setpts=PTS-STARTPTS[v{i}]")
             filter_parts.append(f"[{a_idx}:a]aformat=sample_rates=44100:channel_layouts=stereo,asetpts=PTS-STARTPTS[a{i}]")
             concat_inputs.append(f"[v{i}][a{i}]")
 

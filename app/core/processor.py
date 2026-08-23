@@ -5,6 +5,7 @@ import httpx
 import aiofiles
 import json
 import html as html_escaper
+from typing import Optional
 from datetime import datetime
 from app.core.config import settings
 from app.core.models import Episode
@@ -789,6 +790,10 @@ class Processor:
                     except Exception as e:
                         logger.error(f"Failed to generate Title Intro: {e}")
 
+                # Index of the summary clip within intro_files, once appended below -
+                # this is what the cover-art still image is applied to at concat time.
+                summary_intro_index = None
+
                 # B. AI Summary Features
                 do_text = sub.ai_rewrite_description or sub.append_summary
                 do_audio = sub.ai_audio_summary or sub.append_summary
@@ -829,6 +834,7 @@ class Processor:
                             summary_path = os.path.join(episode_dir, "summary.mp3")
                             await self.ad_detector.validate_tts()
                             await self.ad_detector.generate_audio(summary_text, summary_path)
+                            summary_intro_index = len(intro_files)
                             intro_files.append(summary_path)
                         except Exception as e:
                             logger.error(f"Failed to generate Audio Summary: {e}")
@@ -845,11 +851,16 @@ class Processor:
                         # is v=0:a=1 and would silently strip the video stream even
                         # though output_path keeps its .mp4 name.
                         if ep.is_video:
+                            intro_still_images = [None] * len(intro_files)
+                            if summary_intro_index is not None:
+                                cover_path = await self._fetch_summary_cover_image(sub, ep, episode_dir)
+                                intro_still_images[summary_intro_index] = cover_path
                             await asyncio.to_thread(
                                 VideoProcessor.concat_with_audio_intros,
                                 output_path,
                                 temp_clean_path,
-                                intro_files
+                                intro_files,
+                                intro_still_images
                             )
                         else:
                             concat_list = intro_files + [temp_clean_path]
@@ -862,8 +873,12 @@ class Processor:
                         # Cleanup
                         os.remove(temp_clean_path)
                         for f in intro_files:
-                            if os.path.exists(f): 
+                            if os.path.exists(f):
                                 os.remove(f)
+                        if ep.is_video and summary_intro_index is not None and intro_still_images[summary_intro_index]:
+                            cover_file = intro_still_images[summary_intro_index]
+                            if os.path.exists(cover_file):
+                                os.remove(cover_file)
                         logger.info("Intros prepended successfully.")
                         
             except Exception as e:
@@ -923,6 +938,40 @@ class Processor:
             else:
                 logger.error(f"Max retries reached for {ep.title}")
                 self.ep_repo.update_status(ep.id, "failed", error=str(e))
+
+    async def _fetch_summary_cover_image(self, sub, ep: Episode, episode_dir: str) -> Optional[str]:
+        """Download the podcast/episode cover art to a local file for the AI-summary
+        video clip, so that segment shows the show's artwork instead of a black
+        frame. Tries the subscription's own artwork first, falls back to the
+        episode's (YouTube thumbnail), then the app's static branded cover. Never
+        raises - a failed/missing image just means the clip stays black, same as
+        before this feature existed.
+        """
+        candidates = [
+            getattr(sub, "image_url", None),
+            getattr(ep, "thumbnail_url", None),
+        ]
+        local_fallback = os.path.join("app", "web", "static", "unified_feed_cover.png")
+
+        for url in candidates:
+            if not url:
+                continue
+            try:
+                async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+                    resp = await client.get(url)
+                    resp.raise_for_status()
+                    content_type = resp.headers.get("content-type", "")
+                    ext = ".png" if "png" in content_type else ".jpg"
+                    cover_path = os.path.join(episode_dir, f"summary_cover{ext}")
+                    async with aiofiles.open(cover_path, "wb") as f:
+                        await f.write(resp.content)
+                    return cover_path
+            except Exception as e:
+                logger.warning(f"Failed to download cover image from {url}: {e}")
+
+        if os.path.exists(local_fallback):
+            return local_fallback
+        return None
 
     def _check_cancellation(self, ep: Episode) -> bool:
         """
