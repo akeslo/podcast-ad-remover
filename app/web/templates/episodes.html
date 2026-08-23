@@ -735,7 +735,7 @@
             <div class="flex items-center gap-2 list-actions">
                 {% if ep.status == 'completed' %}
                 {% if ep.is_video %}
-                <a href="/video/{{ subscription.slug }}/{{ ep.guid | replace('/', '_') | replace(' ', '_') }}/processed.mp4"
+                <a href="/video/{{ subscription.slug }}/{{ ep.guid | replace('/', '_') | replace(' ', '_') }}/processed.mp4{% if media_auth_token %}?auth={{ media_auth_token }}{% endif %}"
                     target="_blank" onclick="trackListen({{ ep.id }})"
                     class="p-2 bg-primary-500 rounded-full text-white hover:bg-primary-400 hover:scale-105 transition-all shadow-lg"
                     title="Play Video">
@@ -744,7 +744,7 @@
                     </svg>
                 </a>
                 {% else %}
-                <a href="/audio/{{ subscription.slug }}/{{ ep.guid | replace('/', '_') | replace(' ', '_') }}/{{ basename(ep.local_filename) }}"
+                <a href="/audio/{{ subscription.slug }}/{{ ep.guid | replace('/', '_') | replace(' ', '_') }}/{{ basename(ep.local_filename) }}{% if media_auth_token %}?auth={{ media_auth_token }}{% endif %}"
                     target="_blank" onclick="trackListen({{ ep.id }})"
                     class="p-2 bg-primary-500 rounded-full text-white hover:bg-primary-400 hover:scale-105 transition-all shadow-lg"
                     title="Play">
@@ -874,6 +874,7 @@
     let currentOffset = {{ episodes| length }};
     const pageSize = {{ page_size|default (20) }};
     const subscriptionId = {{ subscription.id }};
+    const mediaAuthToken = {{ media_auth_token | tojson }};
     let isLoading = false;
     let totalEpisodes = {{ total_episodes|default (0) }};
 
@@ -919,10 +920,10 @@
         if (status === 'completed' && ep.local_filename) {
             const guid = (ep.guid || '').replace(/\//g, '_').replace(/ /g, '_');
             if (ep.is_video) {
-                actionButtons = `<a href="/video/${subscriptionSlug}/${guid}/processed.mp4" target="_blank" onclick="trackListen(${ep.id})" class="p-2 bg-primary-500 rounded-full text-white hover:bg-primary-400 hover:scale-105 transition-all shadow-lg" title="Play Video"><svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg></a>`;
+                actionButtons = `<a href="/video/${subscriptionSlug}/${guid}/processed.mp4${mediaAuthToken ? '?auth=' + encodeURIComponent(mediaAuthToken) : ''}" target="_blank" onclick="trackListen(${ep.id})" class="p-2 bg-primary-500 rounded-full text-white hover:bg-primary-400 hover:scale-105 transition-all shadow-lg" title="Play Video"><svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg></a>`;
             } else {
                 const filename = ep.local_filename.split('/').pop();
-                actionButtons = `<a href="/audio/${subscriptionSlug}/${guid}/${filename}" target="_blank" onclick="trackListen(${ep.id})" class="p-2 bg-primary-500 rounded-full text-white hover:bg-primary-400 hover:scale-105 transition-all shadow-lg" title="Play"><svg class="w-4 h-4 ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg></a>`;
+                actionButtons = `<a href="/audio/${subscriptionSlug}/${guid}/${filename}${mediaAuthToken ? '?auth=' + encodeURIComponent(mediaAuthToken) : ''}" target="_blank" onclick="trackListen(${ep.id})" class="p-2 bg-primary-500 rounded-full text-white hover:bg-primary-400 hover:scale-105 transition-all shadow-lg" title="Play"><svg class="w-4 h-4 ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg></a>`;
             }
         } else if (status === 'unprocessed' || status === 'ignored') {
             actionButtons = `<button onclick="downloadEpisode(${ep.id})" class="p-2 text-text-muted hover:text-white hover:bg-white/10 rounded-full transition-colors" title="Download"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg></button>`;

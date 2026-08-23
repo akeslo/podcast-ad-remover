@@ -1771,16 +1771,29 @@ async def view_subscription(request: Request, id: int):
     user = get_current_user(request)
 
     links = generate_rss_links(request, sub, global_settings, user)
-    
+
+    # Per-item /video/ and /audio/ links go through feed_auth_middleware just
+    # like the RSS feed itself, but generate_rss_links only builds the feed
+    # URL's ?auth= token. Without it every "Play"/"Play Video" link 401s
+    # whenever enable_feed_auth is on - build the same token here for reuse
+    # on those links.
+    media_auth_token = None
+    if is_feed_auth_enabled(global_settings):
+        try:
+            media_auth_token = build_feed_auth_token(global_settings, user)
+        except RuntimeError:
+            media_auth_token = None
+
     # Get total listen count for this subscription
     total_listens = ep_repo.get_subscription_listen_count(sub.id)
 
     return templates.TemplateResponse(request, "episodes.html", {
-        "csp_nonce": get_csp_nonce(request), 
+        "csp_nonce": get_csp_nonce(request),
         "user": user,
-        "subscription": sub, 
+        "subscription": sub,
         "episodes": episodes,
         "links": links,
+        "media_auth_token": media_auth_token,
         "basename": lambda p: p.split('/')[-1] if p else '',
         "format_duration": format_duration,
         "total_listens": total_listens,
