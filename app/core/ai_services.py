@@ -994,27 +994,47 @@ class AdDetector:
             # For now, let's just fail if we can't infer it, or better, download voices.json
             raise Exception(f"Piper model {model_filename} not found and cannot infer download URL. Please download it manually to {model_dir}")
 
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            # Download ONNX
-            logger.info(f"Downloading {model_filename} from {remote_base}...")
-            async with client.stream("GET", remote_base) as response:
-                if response.status_code != 200:
-                    raise Exception(f"Failed to download Piper model: HTTP {response.status_code}")
-                with open(model_path, "wb") as f:
-                    async for chunk in response.aiter_bytes():
-                        f.write(chunk)
-            
-            # Download JSON
-            logger.info(f"Downloading {model_filename}.json...")
-            async with client.stream("GET", remote_base + ".json") as response:
-                if response.status_code != 200:
-                    # Clean up partial ONNX if config fails? 
-                    if os.path.exists(model_path): os.remove(model_path)
-                    raise Exception(f"Failed to download Piper config: HTTP {response.status_code}")
-                with open(config_path, "wb") as f:
-                    async for chunk in response.aiter_bytes():
-                        f.write(chunk)
-                        
+        # Download to temporary .part files and only move them into place once both
+        # transfers have completed. The presence check above is the only cache
+        # validity test, so a stream that dies mid-write would otherwise leave a
+        # truncated model/config cached permanently and break TTS with no self-heal.
+        model_tmp = model_path + ".part"
+        config_tmp = config_path + ".part"
+
+        def _cleanup_partials():
+            for path in (model_tmp, config_tmp):
+                try:
+                    if os.path.exists(path):
+                        os.remove(path)
+                except OSError:
+                    pass
+
+        try:
+            async with httpx.AsyncClient(follow_redirects=True) as client:
+                # Download ONNX
+                logger.info(f"Downloading {model_filename} from {remote_base}...")
+                async with client.stream("GET", remote_base) as response:
+                    if response.status_code != 200:
+                        raise Exception(f"Failed to download Piper model: HTTP {response.status_code}")
+                    with open(model_tmp, "wb") as f:
+                        async for chunk in response.aiter_bytes():
+                            f.write(chunk)
+
+                # Download JSON
+                logger.info(f"Downloading {model_filename}.json...")
+                async with client.stream("GET", remote_base + ".json") as response:
+                    if response.status_code != 200:
+                        raise Exception(f"Failed to download Piper config: HTTP {response.status_code}")
+                    with open(config_tmp, "wb") as f:
+                        async for chunk in response.aiter_bytes():
+                            f.write(chunk)
+
+            os.replace(model_tmp, model_path)
+            os.replace(config_tmp, config_path)
+        except BaseException:
+            _cleanup_partials()
+            raise
+
         logger.info(f"Piper model {model_filename} downloaded successfully.")
         return model_path
 
