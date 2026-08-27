@@ -61,9 +61,15 @@ def _is_first_byte_request(request: Request) -> bool:
         range_spec = range_header[6:]
         if "-" in range_spec:
             start = range_spec.split("-")[0]
-            # Count as first request if starting at 0 or very beginning
-            if start == "" or start == "0" or int(start) < 1024:
+            # Count as first request if starting at 0 or very beginning.
+            # A malformed start (e.g. "bytes=abc-100") is not a first-byte
+            # request; never let it raise out of here into a 500.
+            if start == "" or start == "0":
                 return True
+            try:
+                return int(start) < 1024
+            except ValueError:
+                return False
     return False
 
 
