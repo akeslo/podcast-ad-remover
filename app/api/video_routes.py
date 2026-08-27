@@ -5,13 +5,12 @@ from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import FileResponse
 from pathlib import Path
 import os
-import time
-import hashlib
 import logging
 
 from app.core.config import settings
 from app.infra.repository import EpisodeRepository, SubscriptionRepository
 from app.web.auth_utils import get_client_ip
+from app.api.media_serving import should_count_access, is_first_byte_request
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -21,54 +20,12 @@ _view_cache: dict[str, float] = {}
 DEDUPE_WINDOW_SECONDS = 2 * 60 * 60  # 2 hours
 
 
-def _get_cache_key(ip: str, episode_id: int) -> str:
-    """Generate a cache key for deduplication."""
-    return hashlib.md5(f"{ip}:{episode_id}".encode()).hexdigest()
-
-
 def _should_count_view(ip: str, episode_id: int) -> bool:
     """Check if this request should count as a new view (deduplication)."""
-    global _view_cache
-
-    cache_key = _get_cache_key(ip, episode_id)
-    now = time.time()
-
-    # Clean old entries (prevent memory leak)
-    expired = [k for k, v in _view_cache.items() if now - v > DEDUPE_WINDOW_SECONDS]
-    for k in expired:
-        del _view_cache[k]
-
-    # Check if already counted recently
-    if cache_key in _view_cache:
-        last_access = _view_cache[cache_key]
-        if now - last_access < DEDUPE_WINDOW_SECONDS:
-            return False
-
-    _view_cache[cache_key] = now
-    return True
+    return should_count_access(_view_cache, ip, episode_id, DEDUPE_WINDOW_SECONDS)
 
 
-def _is_first_byte_request(request: Request) -> bool:
-    """Check if this is the first request for the file (not a mid-stream Range request)."""
-    range_header = request.headers.get("Range", "")
-    if not range_header:
-        return True  # No Range header = full file request
-
-    # Parse Range: bytes=START-END
-    if range_header.startswith("bytes="):
-        range_spec = range_header[6:]
-        if "-" in range_spec:
-            start = range_spec.split("-")[0]
-            # Count as first request if starting at 0 or very beginning.
-            # A malformed start (e.g. "bytes=abc-100") is not a first-byte
-            # request; never let it raise out of here into a 500.
-            if start == "" or start == "0":
-                return True
-            try:
-                return int(start) < 1024
-            except ValueError:
-                return False
-    return False
+_is_first_byte_request = is_first_byte_request
 
 
 @router.get("/video/{path:path}")
