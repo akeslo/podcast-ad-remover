@@ -65,6 +65,25 @@ class Settings(BaseSettings):
     # longer than any plausible single download. 24h is roughly 100x the
     # observed worst case.
     PART_FILE_MAX_AGE_HOURS: int = Field(24, description="Age (hours) after which a .part file is treated as an abandoned download.")
+
+    # Retention for episodes that failed and will never be retried
+    # (Processor.cleanup_old_episodes, selector 3).
+    #
+    # WHY THIS EXISTS: the count-based auto retention computes ROW_NUMBER() over
+    # a set already filtered to `status='completed'`, so a non-completed episode
+    # is never counted against `retention_limit` and never selected for
+    # deletion. Its directory therefore survives forever, while ALSO being
+    # invisible to the orphan sweep (which protects every episodes row whatever
+    # its status). Neither mechanism could reclaim it. This is the third
+    # selector that closes that gap.
+    #
+    # The grace window is what makes it safe. `EpisodeRepository.requeue_stuck`
+    # turns every interrupted 'processing' episode into 'failed' on each
+    # restart, so reaping a failed episode the instant it appears would silently
+    # discard work the operator may still want to retry. A failed episode is
+    # only reclaimed once it has sat terminal for this long AND has no retry
+    # scheduled (`next_retry_at IS NULL`).
+    FAILED_RETENTION_DAYS: int = Field(7, description="Days a failed episode with no scheduled retry keeps its files before retention reclaims them.")
     
     @property
     def DB_PATH(self) -> str:

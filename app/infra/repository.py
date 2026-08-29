@@ -228,12 +228,21 @@ class EpisodeRepository:
         """Reset all 'processing' episodes to 'failed' on startup."""
         with get_db_connection() as conn:
             conn.execute("""
-                UPDATE episodes 
-                SET status = 'failed', 
+                UPDATE episodes
+                SET status = 'failed',
                     error_message = 'Interrupted by system restart',
-                    processing_step = 'interrupted', 
+                    processing_step = 'interrupted',
                     progress = 0,
-                    next_retry_at = NULL
+                    next_retry_at = NULL,
+                    -- Stamp the terminal transition. Every other path into
+                    -- 'failed' goes through update_status(), which sets
+                    -- processed_at; this raw UPDATE did not, leaving the row
+                    -- undateable. Retention's failed-episode grace window is
+                    -- measured from processed_at, so an unstamped row either
+                    -- escapes reclamation forever or (via a pub_date fallback)
+                    -- gets reaped the moment it fails. Stamping here is what
+                    -- makes the grace window mean "7 days since it failed".
+                    processed_at = COALESCE(processed_at, CURRENT_TIMESTAMP)
                 WHERE status = 'processing'
             """)
             conn.commit()

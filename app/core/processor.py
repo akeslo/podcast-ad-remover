@@ -1092,50 +1092,36 @@ class Processor:
             logger.warning(f"Log cleanup failed: {e}")
 
     async def cleanup_old_episodes(self):
-        """Clean up episodes per retention policies: Manual (Time) + Auto (Count)."""
+        """
+        Delete every episode retention says is expired.
+
+        Selection lives in `app.core.retention.select_expired_episodes` and is
+        deliberately NOT duplicated here: the `--dry-run` report the operator
+        reviews before a purge must act on the exact same keep set this does,
+        or the plan he approves is not the plan that runs.
+
+        This function is the only thing that deletes. It walks the selection and
+        hands each id to `delete_episode`, which removes the episode directory
+        and soft-deletes the row.
+        """
         from app.infra.database import get_db_connection
+        from app.core.retention import select_expired_episodes
+
         try:
-            ids_to_delete = []
             with get_db_connection() as conn:
-                # 1. Manual Downloads (Time Based)
-                # processed_at < now - manual_retention_days
-                cursor = conn.execute("""
-                    SELECT e.id, e.title FROM episodes e
-                    LEFT JOIN subscriptions s ON e.subscription_id = s.id
-                    WHERE e.status = 'completed' 
-                      AND e.is_manual_download = 1
-                      AND datetime(e.processed_at) < datetime('now', '-' || COALESCE(s.manual_retention_days, 14) || ' days')
-                """)
-                for row in cursor.fetchall():
-                    logger.info(f"Cleanup: Expired Manual Download: {row['title']}")
-                    ids_to_delete.append(row['id'])
-
-                # 2. Auto Downloads (Count Based - Keep Last N)
-                # Uses Window Functions (SQLite 3.25+)
-                try:
-                    cursor = conn.execute("""
-                        SELECT t.id, t.title 
-                        FROM (
-                           SELECT id, title, subscription_id,
-                                  ROW_NUMBER() OVER (PARTITION BY subscription_id ORDER BY pub_date DESC) as rn
-                           FROM episodes
-                           WHERE status='completed' 
-                             AND (is_manual_download IS NULL OR is_manual_download=0)
-                        ) t
-                        JOIN subscriptions s ON t.subscription_id = s.id
-                        WHERE t.rn > COALESCE(s.retention_limit, 1)
-                    """)
-                    for row in cursor.fetchall():
-                         logger.info(f"Cleanup: Auto Download Exceeds Limit: {row['title']}")
-                         ids_to_delete.append(row['id'])
-                except Exception as e:
-                    logger.error(f"Cleanup Auto Error (Window Function?): {e}")
-
-            for ep_id in set(ids_to_delete):
-                await self.delete_episode(ep_id)
-                
+                expired = select_expired_episodes(conn)
         except Exception as e:
-            logger.error(f"Episode cleanup failed: {e}")
+            # Fail closed. An unreadable database deletes nothing.
+            logger.error(f"Episode cleanup failed (selection): {e}")
+            return
+
+        for item in expired:
+            logger.info(f"Cleanup: {item.reason}: {item.title}")
+            try:
+                await self.delete_episode(item.id)
+            except Exception as e:
+                # One undeletable episode must not abandon the rest of the pass.
+                logger.error(f"Episode cleanup failed to delete {item.id}: {e}")
 
     async def cleanup_orphans(self):
         """
