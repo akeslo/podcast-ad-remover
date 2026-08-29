@@ -8,7 +8,11 @@ name: Build and Push Docker Image
 
 on:
   push:
-    branches: [master]
+    # `master` until 2026-08-29, and that branch has never existed in this repo: `main`
+    # is the only branch and has always been the default. So the push trigger never
+    # fired once, every image was built by hand or by dispatch, and a green `git push`
+    # published nothing while looking exactly like a successful release.
+    branches: [main]
     paths-ignore:
       - '**.md'
       - 'docs/**'
