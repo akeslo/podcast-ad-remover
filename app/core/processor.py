@@ -1137,6 +1137,28 @@ class Processor:
         except Exception as e:
             logger.error(f"Episode cleanup failed: {e}")
 
+    async def cleanup_orphans(self):
+        """
+        Filesystem-vs-database reconciliation sweep.
+
+        IN ADDITION to cleanup_old_episodes, not a replacement for it: that
+        deletes by `episodes` row, so anything the database does not reference
+        (stale `loading-*` placeholder directories, episode directories whose
+        row was hard-deleted, abandoned `.part` downloads) is invisible to it
+        forever. See app/core/orphan_cleanup.py for the safety model.
+        """
+        if not getattr(settings, "ORPHAN_CLEANUP_ENABLED", True):
+            return None
+        try:
+            from app.core.orphan_cleanup import sweep_orphans
+            result = await asyncio.to_thread(sweep_orphans)
+            if result.ran and result.removed_count:
+                logger.info(result.summary())
+            return result
+        except Exception as e:
+            logger.error(f"Orphan cleanup failed: {e}")
+            return None
+
     async def run_loop(self):
         """Main loop."""
         # Requeue entries that were interrupted
@@ -1170,6 +1192,7 @@ class Processor:
                     logger.info("Interval reached. Checking feeds/maintenance...")
                     await self.cleanup_old_logs()
                     await self.cleanup_old_episodes()
+                    await self.cleanup_orphans()
                     await self.check_feeds()
                     last_feed_check = datetime.now()
                 

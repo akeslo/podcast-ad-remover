@@ -44,6 +44,27 @@ class Settings(BaseSettings):
     WHISPER_MODEL: str = "base"
     LOG_MAX_BYTES: int = 10 * 1024 * 1024  # 10 MB
     LOG_BACKUP_COUNT: int = 5
+
+    # Orphan / scratch reconciliation sweep (app/core/orphan_cleanup.py).
+    #
+    # This is IN ADDITION to Processor.cleanup_old_episodes, never a
+    # replacement for it: retention deletes by `episodes` row, so anything the
+    # database does not reference is invisible to it forever (stale
+    # `loading-*` placeholder subscription directories, episode directories
+    # whose row was hard-deleted, abandoned `.part` downloads).
+    ORPHAN_CLEANUP_ENABLED: bool = Field(True, description="Run the filesystem-vs-database orphan reconciliation sweep during scheduled maintenance.")
+    # Nothing is removed until it has been untouched for this long. A path is
+    # only ever an orphan candidate if the database does not reference it, so
+    # this is a second, independent safety net: it protects a directory that
+    # was created on disk moments before the sweep read the database (the
+    # `loading-<ts>` placeholder is created on disk and renamed on success, so
+    # its name alone must never be the gate).
+    ORPHAN_MIN_AGE_HOURS: int = Field(24, description="Minimum age (hours, by mtime) before an unreferenced path may be deleted.")
+    # A `.part` file is an in-flight download. yt-dlp writes multi-GB video to
+    # `.part` and moves it into place on success, so this threshold must be far
+    # longer than any plausible single download. 24h is roughly 100x the
+    # observed worst case.
+    PART_FILE_MAX_AGE_HOURS: int = Field(24, description="Age (hours) after which a .part file is treated as an abandoned download.")
     
     @property
     def DB_PATH(self) -> str:
