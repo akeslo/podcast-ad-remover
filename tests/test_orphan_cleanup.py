@@ -238,16 +238,24 @@ def test_empty_subscriptions_table_sweeps_nothing(fake_db, tree):
     assert os.path.exists(os.path.join(tree, "show", "ep"))
 
 
-def test_episode_row_with_unknown_subscription_sweeps_nothing(fake_db, tree):
-    """Unexpected layout -> fail closed."""
+# SUPERSEDED 2026-08-29. This asserted that an episode row pointing at a missing
+# subscription aborts the sweep, which is what the code did when written. Prod then showed
+# why that is the wrong call: deleting a subscription does not delete its episodes, so 21
+# such rows existed across three long-gone ids and the sweep could never run at all. The
+# behaviour is now protect-rather-than-abort, pinned by
+# test_unknown_subscription_protects_rather_than_aborting below. Kept as the record of the
+# change, asserting the new contract on the same fixture.
+def test_episode_row_with_unknown_subscription_still_protects_named_dirs(fake_db, tree):
     _seed(fake_db, [(1, "show")], [(99, "orphan-row-guid")])
     _make_episode_dir(tree, "show", "whatever")
 
     res = sweep_orphans(podcasts_dir=tree)
 
-    assert not res.ran
-    assert res.removed_count == 0
-    assert os.path.exists(os.path.join(tree, "show", "whatever"))
+    # It runs now, and "whatever" is named by no row, so it is a genuine orphan.
+    assert res.ran
+    assert os.path.exists(os.path.join(tree, "show", episode_slug_for("orphan-row-guid"))) is False, \
+        "no such directory was created; the orphaned row simply protects its slug"
+    assert not os.path.exists(os.path.join(tree, "show", "whatever"))
 
 
 def test_subscription_without_slug_sweeps_nothing(fake_db, tree):
@@ -338,3 +346,69 @@ async def test_processor_swallows_sweep_failure(monkeypatch):
 
     monkeypatch.setattr("app.core.orphan_cleanup.sweep_orphans", _boom)
     assert await proc.cleanup_orphans() is None
+
+
+# --------------------------------------------------------------------------
+# An episode row pointing at a DELETED subscription
+# --------------------------------------------------------------------------
+
+def test_unknown_subscription_protects_rather_than_aborting(fake_db, tree):
+    """
+    This used to raise and abort the whole sweep. Correct in intent, wrong in practice:
+    deleting a subscription does not delete its episodes, so prod carried 21 such rows
+    across three long-gone ids (1008, 1012, 1018, against a live range of 1036-1047) and
+    the sweep could never run at all. A safety check that permanently disables the feature
+    on an ordinary, recurring data condition protects nothing.
+
+    Protecting is strictly safer than aborting was: an abort deletes nothing ANYWHERE, and
+    this deletes nothing any episode row names while still reclaiming what no row mentions.
+    """
+    _seed(fake_db, [(1, "real-show")], [(1, "guid-kept"), (999, "guid-orphaned")])
+    _make_episode_dir(tree, "real-show", episode_slug_for("guid-kept"))
+    _make_episode_dir(tree, "real-show", episode_slug_for("guid-orphaned"))
+    gone = _make_episode_dir(tree, "real-show", "no-row-at-all")
+
+    res = sweep_orphans(dry_run=True, podcasts_dir=tree)
+
+    assert res.ran is True, "an unknown subscription must no longer abort the sweep"
+    assert res.skipped_reason is None
+    planned = {os.path.basename(p) for p in res.orphan_dirs}
+    assert episode_slug_for("guid-orphaned") not in planned
+    assert episode_slug_for("guid-kept") not in planned
+    assert planned == {"no-row-at-all"}
+    assert os.path.exists(gone), "dry run must delete nothing"
+
+
+def test_orphaned_episode_slug_is_protected_in_every_show(fake_db, tree):
+    """
+    We cannot tell WHICH directory an orphaned row's files live in, so its slug is
+    protected everywhere rather than resolved to one place. Conservative on purpose: the
+    cost is a directory kept, and the alternative is deleting real audio.
+    """
+    _seed(fake_db, [(1, "show-a"), (2, "show-b")], [(999, "guid-orphaned")])
+    slug = episode_slug_for("guid-orphaned")
+    _make_episode_dir(tree, "show-a", slug)
+    _make_episode_dir(tree, "show-b", slug)
+    _make_episode_dir(tree, "show-a", "unreferenced")
+
+    planned = {os.path.basename(p) for p in
+               sweep_orphans(dry_run=True, podcasts_dir=tree).orphan_dirs}
+
+    assert slug not in planned
+    assert planned == {"unreferenced"}
+
+
+def test_a_subscription_with_no_slug_still_aborts(fake_db, tree):
+    """
+    The other fail-closed case is NOT relaxed. A NULL slug means we cannot tell which
+    directory belongs to a subscription that genuinely exists, so the layout is unknown
+    and sweeping anything would be guessing.
+    """
+    _seed(fake_db, [(1, "real-show"), (2, None)], [(1, "guid-1")])
+    _make_episode_dir(tree, "real-show", episode_slug_for("guid-1"))
+    _make_episode_dir(tree, "orphan-dir", "x")
+
+    res = sweep_orphans(dry_run=True, podcasts_dir=tree)
+
+    assert res.ran is False
+    assert res.orphan_dirs == []

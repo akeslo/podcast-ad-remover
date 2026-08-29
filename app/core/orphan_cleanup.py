@@ -145,13 +145,40 @@ def _load_reference_index() -> tuple[dict[str, set[str]], set[str]]:
             )
 
     referenced: dict[str, set[str]] = {slug: set() for slug in sub_slugs}
+    orphan_episode_slugs: set[str] = set()
+    unknown_sub_ids: set[int] = set()
     for sub_id, slugs in episodes_by_sub_id.items():
         slug = id_to_slug.get(sub_id)
         if slug is None:
-            # An episode row pointing at a missing subscription: we do not know
-            # where its files live, so we cannot safely call anything an orphan.
-            raise ValueError(f"episode rows reference unknown subscription {sub_id}")
+            # An episode row pointing at a missing subscription. We do not know which
+            # directory its files live in, so its episode slugs are PROTECTED EVERYWHERE
+            # rather than resolved to one place.
+            #
+            # This used to raise, which aborted the whole sweep. Correct in intent and
+            # wrong in practice: deleting a subscription does not delete its episodes, so
+            # prod carried 21 such rows across three long-gone subscription ids (1008, 1012,
+            # 1018, against a live range of 1036-1047) and the sweep could never run at all.
+            # A safety check that disables the feature permanently on an ordinary and
+            # recurring data condition protects nothing; it just guarantees the disk fills.
+            #
+            # Protecting is strictly safer than aborting was: an aborted sweep deletes
+            # nothing anywhere, and this deletes nothing that any episode row names, while
+            # still reclaiming everything no row mentions at all.
+            unknown_sub_ids.add(sub_id)
+            orphan_episode_slugs |= slugs
+            continue
         referenced[slug] |= slugs
+
+    if unknown_sub_ids:
+        # Reported, never silent. These rows are a real data defect worth fixing at the
+        # source, and a sweep that quietly worked around one would hide it forever.
+        logger.warning(
+            "Orphan sweep: %d episode row group(s) reference missing subscription(s) %s; "
+            "their directories are protected, not swept",
+            len(unknown_sub_ids), sorted(unknown_sub_ids),
+        )
+        for slug in referenced:
+            referenced[slug] |= orphan_episode_slugs
 
     return referenced, sub_slugs
 
