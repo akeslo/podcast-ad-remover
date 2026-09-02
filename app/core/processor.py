@@ -269,7 +269,17 @@ class Processor:
             limit = db_settings.get('concurrent_downloads', 2)
             if not limit or limit < 1: limit = 2
 
-            # 2. Check if we have room using DATABASE count (cross-process safe)
+            # 2. Check if we have room using a DATABASE count. This is a
+            # capacity estimate, not a claim: `count_processing()` (read) and
+            # the per-episode `update_status()` claim below (write) are
+            # separate statements, so this count alone does not make the
+            # whole sequence atomic across processes/workers. It is currently
+            # safe only because deployment runs a single uvicorn process with
+            # no --workers and `Processor._queue_lock` serializes callers
+            # within that one process — a multi-worker deployment would need
+            # more than this count to avoid double-claiming an episode. What
+            # actually prevents a double-claim, including across processes,
+            # is the conditional UPDATE in step 4 below.
             currently_processing = self.ep_repo.count_processing()
             if currently_processing >= limit:
                 return
@@ -284,22 +294,27 @@ class Processor:
             for ep_dict in pending:
                 if capacity <= 0:
                     break
-                    
+
                 ep_id = ep_dict['id']
-                
+
                 # Skip if already in our in-process tracking (for this process)
                 if ep_id in Processor._active_task_ids:
                     continue
-                
-                # CRITICAL: Mark as "processing" in DB BEFORE launching task
-                # This prevents other processes from picking up the same episode
-                self.ep_repo.update_status(ep_id, "processing")
+
+                # Atomically claim the episode: the UPDATE only succeeds if
+                # the row is still 'pending' at the moment it runs, so two
+                # racing claimants (this loop, another process, a retry path)
+                # can never both win the same episode. If the claim fails,
+                # someone else already took it — skip without launching.
+                claimed = self.ep_repo.update_status(ep_id, "processing", condition_status="pending")
+                if not claimed:
+                    continue
                 self.ep_repo.update_progress(ep_id, "Starting...", 0)
-                    
+
                 # Add to in-process set and launch
                 Processor._active_task_ids.add(ep_id)
                 capacity -= 1
-                
+
                 # Start background task
                 asyncio.create_task(self._process_single_episode_task(ep_dict))
 

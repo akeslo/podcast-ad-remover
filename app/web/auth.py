@@ -157,10 +157,37 @@ async def auth_middleware(request: Request, call_next):
     Middleware to handle authentication and IP allowlisting.
     """
     path = request.url.path
-    
-    # Skip auth/IP check for specific paths
+
+    # Check if auth is enabled / whether an IP allowlist is configured. This
+    # read happens BEFORE the public-path bypass below, on purpose: the IP
+    # allowlist is documented (and must actually behave) as applying to
+    # EVERYTHING, including /feeds/, /feed/, /audio/ and /video/. It used to
+    # be read only after the bypass, so those paths returned early and the
+    # allowlist check a few lines down never ran for them at all - an
+    # operator who set an allowlist believing it locked down every route left
+    # media and feed URLs open to any IP. Feed-token auth (a separate check,
+    # in `feed_auth_middleware`) still gates those paths independently; this
+    # restores the IP layer alongside it, not instead of it.
+    with get_db_connection() as conn:
+        settings = conn.execute("SELECT auth_enabled, ip_allowlist FROM app_settings WHERE id = 1").fetchone()
+
+    # 1. GLOBAL IP CHECK (High Priority)
+    # If an allowlist is set, it applies to EVERYTHING (Admin, Feeds, Audio, Dashboard)
+    if settings and settings['ip_allowlist']:
+        client_ip = get_client_ip(request, trust_proxy_headers=app_settings.TRUST_PROXY_HEADERS)
+        if not is_ip_allowed(client_ip, settings['ip_allowlist']):
+            logger.warning(f"AUTH - IP blocked: {client_ip} - Path: {path}")
+            # Returned, not raised - see `_forbidden`. Same defect as the
+            # admin check below: raising here reported an IP allowlist denial
+            # as a 500.
+            return _forbidden(request, "Access denied from your IP address")
+
+    # Skip auth (session/admin) check for specific paths - this bypass is
+    # session/admin auth only. It never bypasses the IP-allowlist check
+    # above, which already ran.
     # static: always public
-    # feeds/audio: public to world (IP check skipped), but might be protected by Feed Auth elsewhere
+    # feeds/audio: public to world (session/admin check skipped), but
+    # protected by Feed Auth elsewhere (and now also by the IP check above)
     #
     # The prefixes below are matched with an explicit trailing slash and the
     # bare path is listed separately, so the exemption covers exactly the
@@ -172,24 +199,9 @@ async def auth_middleware(request: Request, call_next):
     PUBLIC_PREFIXES = ("/static/", "/feeds/", "/feed/", "/audio/", "/video/")
     if path in PUBLIC_PATHS or path.startswith(PUBLIC_PREFIXES):
         return await call_next(request)
-    
-    # Check if auth is enabled
-    with get_db_connection() as conn:
-        settings = conn.execute("SELECT auth_enabled, ip_allowlist FROM app_settings WHERE id = 1").fetchone()
-    
+
     if not settings:
         return await call_next(request)
-
-    # 1. GLOBAL IP CHECK (High Priority)
-    # If an allowlist is set, it applies to EVERYTHING (Admin, Feeds, Audio, Dashboard)
-    if settings['ip_allowlist']:
-        client_ip = get_client_ip(request, trust_proxy_headers=app_settings.TRUST_PROXY_HEADERS)
-        if not is_ip_allowed(client_ip, settings['ip_allowlist']):
-            logger.warning(f"AUTH - IP blocked: {client_ip} - Path: {path}")
-            # Returned, not raised - see `_forbidden`. Same defect as the
-            # admin check below: raising here reported an IP allowlist denial
-            # as a 500.
-            return _forbidden(request, "Access denied from your IP address")
 
     # 2. USER AUTHENTICATION CHECK
     # Only if auth is enabled

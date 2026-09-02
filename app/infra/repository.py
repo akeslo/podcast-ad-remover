@@ -272,7 +272,18 @@ class EpisodeRepository:
             """, (next_retry_at, error, id))
             conn.commit()
 
-    def update_status(self, id: int, status: str, error: str = None, filename: str = None, file_size: int = None):
+    def update_status(self, id: int, status: str, error: str = None, filename: str = None,
+                       file_size: int = None, condition_status: str = None) -> bool:
+        """Update an episode's status.
+
+        `condition_status`, when given, adds `AND status = ?` to the WHERE
+        clause and the call becomes an atomic claim: the single UPDATE
+        statement is the only place that reads and writes the current status,
+        so two concurrent callers can never both believe they claimed the
+        same row. Returns whether a row was actually updated — the caller
+        must check this before treating the claim as won, exactly like
+        `update_status_by_guid`'s existing `condition_status` pattern.
+        """
         with get_db_connection() as conn:
             # Only write local_filename/file_size when the caller actually supplied
             # them. Writing them unconditionally wiped the path to an already
@@ -299,11 +310,17 @@ class EpisodeRepository:
             updates.append("next_retry_at = NULL")
 
             params.append(id)
-            conn.execute(
-                f"UPDATE episodes SET {', '.join(updates)} WHERE id = ?",
+            where = "id = ?"
+            if condition_status is not None:
+                where += " AND status = ?"
+                params.append(condition_status)
+
+            cursor = conn.execute(
+                f"UPDATE episodes SET {', '.join(updates)} WHERE {where}",
                 tuple(params)
             )
             conn.commit()
+            return cursor.rowcount > 0
 
     def update_progress(self, id: int, step: str, progress: int, transcript_path: str = None, ad_report_path: str = None, report_path: str = None):
         with get_db_connection() as conn:
