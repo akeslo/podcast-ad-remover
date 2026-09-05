@@ -6,9 +6,12 @@ from app.core.feed import FeedManager
 from app.core.processor import Processor
 from app.core.search import PodcastSearcher
 from pydantic import BaseModel
+import logging
 import shutil
 import os
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 # The same two dependencies the HTML routes use, imported rather than
 # re-declared so there is exactly one definition of "guarded" in the app.
 # `app.web.router` does not import anything under `app.api`, so this edge is
@@ -89,15 +92,15 @@ async def delete_subscription(id: int):
                 try:
                     shutil.rmtree(dir_path)
                 except Exception as e:
-                    print(f"Error deleting directory {dir_path}: {e}")
-        
+                    logger.warning(f"Error deleting directory {dir_path}: {e}")
+
         # Feed file
         feed_path = os.path.join(settings.FEEDS_DIR, f"{sub.slug}.xml")
         if os.path.exists(feed_path):
             try:
                 os.remove(feed_path)
             except Exception as e:
-                 print(f"Error deleting feed file {feed_path}: {e}")
+                 logger.warning(f"Error deleting feed file {feed_path}: {e}")
 
         # 3. Delete Subscription from DB
         repo.delete(id)
