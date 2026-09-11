@@ -11,6 +11,10 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+# Minimum silence between consecutive transcript segments before the ad
+# prompt renders an explicit "no transcribed speech" marker line.
+GAP_MARKER_SECONDS = 8.0
+
 
 class RateLimitError(Exception):
     """Custom exception for API rate limit errors with retry timing info."""
@@ -105,9 +109,15 @@ class Transcriber:
         try:
             # faster-whisper returns a generator
             # We transcribe the CLEAN audio path
+            # condition_on_previous_text=False: with the default (True) the
+            # tiny/base models emit nothing for the window right after a
+            # sign-off line, and a dynamically inserted ad sits exactly there.
+            # The hole never reaches the ad detector, so only the spoken
+            # tagline at the end of the ad gets cut.
             segments_generator, info = self.model.transcribe(
                 clean_audio_path, 
-                beam_size=5
+                beam_size=5,
+                condition_on_previous_text=False,
             )
             
             logger.info(f"Detected language: {info.language} with probability {info.language_probability}")
@@ -195,7 +205,11 @@ class Transcriber:
                 logger.debug(f"Chunk {i} boundaries: {merge_start:.2f}s to {merge_end:.2f}s")
                 
                 # Transcribe chunk
-                segments_generator, info = self.model.transcribe(chunk_path, beam_size=5)
+                # condition_on_previous_text=False for the same reason as the
+                # single-pass call: windows after a sign-off get dropped otherwise.
+                segments_generator, info = self.model.transcribe(
+                    chunk_path, beam_size=5, condition_on_previous_text=False
+                )
                 if detected_language is None:
                     detected_language = getattr(info, "language", None)
 
@@ -648,9 +662,7 @@ class AdDetector:
             }
 
         # Prepare transcript text
-        text_data = ""
-        for seg in transcript['segments']:
-            text_data += f"[{seg['start']:.2f}-{seg['end']:.2f}] {seg['text']}\n"
+        text_data = self._render_transcript(transcript['segments'])
 
         # Build Prompt
         prompt = self._build_ad_prompt(options, text_data)
@@ -735,6 +747,31 @@ class AdDetector:
             raise
 
     # --- Helpers ---
+    @staticmethod
+    def _render_transcript(segments: List[Dict]) -> str:
+        """Render timestamped transcript lines for the ad prompt.
+
+        Whisper leaves music and produced ads as an untranscribed hole, which
+        the model cannot see if only the spoken lines are rendered. A gap of
+        GAP_MARKER_SECONDS or more between consecutive segments therefore gets
+        an explicit marker line so the detector can treat it as a candidate.
+        """
+        text_data = ""
+        prev_end = None
+        for seg in segments:
+            start = float(seg['start'])
+            end = float(seg['end'])
+            if prev_end is not None:
+                gap = start - prev_end
+                if gap >= GAP_MARKER_SECONDS:
+                    text_data += (
+                        f"[{prev_end:.2f}-{start:.2f}] <{gap:.0f} s of audio with no "
+                        f"transcribed speech - likely music or a produced ad>\n"
+                    )
+            text_data += f"[{start:.2f}-{end:.2f}] {seg['text']}\n"
+            prev_end = end if prev_end is None else max(prev_end, end)
+        return text_data
+
     def _build_ad_prompt(self, options, transcript_text):
         # Fetch targets with safety defaults
         targets = []

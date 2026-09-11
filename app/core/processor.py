@@ -239,6 +239,61 @@ class Processor:
         logger.info(f"Metadata and Title updated for episode {episode_id}")
         return True
 
+    @staticmethod
+    def _absorb_transcript_gaps(ad_segments: list, transcript_segments: list,
+                                min_gap: float = 8.0, adj: float = 2.0,
+                                max_absorb: float = 120.0) -> list:
+        """Extend ad segments into adjacent untranscribed holes.
+
+        Whisper leaves a produced ad (music bed, different voice) as a gap
+        between consecutive transcript segments, so the detector only sees the
+        spoken tagline at the end and the listener hears the whole ad followed
+        by a mid-sentence chop. A hole of at least `min_gap` seconds is a
+        candidate; an ad starting within `adj` seconds after the hole ends is
+        pulled back to the hole's start, and an ad ending within `adj` seconds
+        before the hole starts is pushed forward to the hole's end. Absorption
+        is capped at `max_absorb` seconds per hole so a long silent stretch
+        cannot swallow content. Segments are never merged here; the result is
+        a new sorted list and the inputs are left untouched.
+        """
+        if not ad_segments:
+            return []
+
+        holes = []
+        prev_end = None
+        for seg in sorted(transcript_segments, key=lambda s: float(s['start'])):
+            start = float(seg['start'])
+            end = float(seg['end'])
+            if prev_end is not None and start - prev_end >= min_gap:
+                holes.append((prev_end, start))
+            prev_end = end if prev_end is None else max(prev_end, end)
+
+        result = []
+        for ad in sorted(ad_segments, key=lambda x: x['start']):
+            widened = ad.copy()
+            for hole_start, hole_end in holes:
+                # Ad begins just after the hole: absorb backwards.
+                if 0 <= widened['start'] - hole_end <= adj:
+                    new_start = max(hole_start, hole_end - max_absorb)
+                    if new_start < widened['start']:
+                        logger.info(
+                            f"Widened ad start {widened['start']:.2f} -> {new_start:.2f} "
+                            f"into untranscribed hole {hole_start:.2f}-{hole_end:.2f}"
+                        )
+                        widened['start'] = new_start
+                # Ad ends just before the hole: absorb forwards.
+                if 0 <= hole_start - widened['end'] <= adj:
+                    new_end = min(hole_end, hole_start + max_absorb)
+                    if new_end > widened['end']:
+                        logger.info(
+                            f"Widened ad end {widened['end']:.2f} -> {new_end:.2f} "
+                            f"into untranscribed hole {hole_start:.2f}-{hole_end:.2f}"
+                        )
+                        widened['end'] = new_end
+            result.append(widened)
+
+        return sorted(result, key=lambda x: x['start'])
+
     def _extract_text(self, start: float, end: float, segments: list) -> str:
         """Extract text from transcript overlapping with the given time range."""
         text = []
@@ -608,6 +663,10 @@ class Processor:
             
             ad_segments = merged_segments
             logger.info(f"After merging: {len(ad_segments)} ad segments")
+
+            # Widen ads into adjacent untranscribed holes (produced ads,
+            # music beds) that Whisper never rendered as segments.
+            ad_segments = self._absorb_transcript_gaps(ad_segments, transcript['segments'])
             
             # Enrich with Text
             for s in ad_segments:
