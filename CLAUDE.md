@@ -33,8 +33,9 @@ providers), `PODCAST_INDEX_API_KEY` / `PODCAST_INDEX_API_SECRET` (discovery; DB-
   walk the mounted app, not one router.
 - `app/core/processor.py` is the background pipeline: download → `audio.py`/`video.py` →
   `ai_services.py` (whisper transcription + provider ad detection) → cut → `rss_gen.py`.
-- `app/core/ai_services.py`: `GeminiProvider` has multi-key rotation and transient-error retry;
-  OpenAI/Claude/OpenRouter are flat model-list fallbacks only.
+- `app/core/ai_services.py`: all four providers (Gemini, OpenAI, Anthropic/Claude, OpenRouter)
+  have multi-key rotation and transient-error retry (2026-09-20), sharing the same
+  `TRANSIENT_ERROR_PATTERNS`/`RATE_LIMIT_ERROR_PATTERNS` classification Gemini originated.
 - `app/core/retention.py` is the single selector for what retention may delete, consumed by both
   the deleter and the dry-run report. `orphan_cleanup.py` reaps directories no `episodes` row
   references and fails closed when the `subscriptions` table is empty.

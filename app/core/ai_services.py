@@ -15,6 +15,39 @@ logger = logging.getLogger(__name__)
 # prompt renders an explicit "no transcribed speech" marker line.
 GAP_MARKER_SECONDS = 8.0
 
+# Shared error-classification patterns, matched case-insensitively against str(exception).
+# Kept as one module-level list per class (rather than copy-pasted into each provider) so
+# OpenAI/Claude/OpenRouter classify the same way Gemini always has.
+TRANSIENT_ERROR_PATTERNS = [
+    '503', '500',
+    'unavailable',
+    'overloaded',
+    'high demand',
+    'try again later',
+    'internal error',
+    'internal server error',
+    'deadline exceeded',
+    'timeout',
+    'timed out',
+    'connection reset',
+    'connection error',
+]
+
+RATE_LIMIT_ERROR_PATTERNS = [
+    'resource_exhausted',
+    'quota exceeded',
+    'rate limit',
+    'rate_limit',
+    '429',
+    'too many requests',
+    'resourceexhausted',
+]
+
+
+def _matches_any(error_str: str, patterns: List[str]) -> bool:
+    s = error_str.lower()
+    return any(p in s for p in patterns)
+
 
 class RateLimitError(Exception):
     """Custom exception for API rate limit errors with retry timing info."""
@@ -438,32 +471,112 @@ class GeminiProvider(LLMProvider):
         return models
 
 class OpenAIProvider(LLMProvider):
-    def __init__(self, api_key: str, models: List[str], base_url: str = None):
-        import openai
-        self.client = openai.OpenAI(api_key=api_key, base_url=base_url)
-        self.models = models
-        self.is_openrouter = base_url and "openrouter" in base_url
+    # Same tuning as GeminiProvider._generate_one — extra in-place attempts on the SAME
+    # model/key before giving up on a transient 5xx/timeout, so a momentary blip doesn't
+    # burn a key rotation or a model fallthrough it didn't need.
+    TRANSIENT_MAX_RETRIES = 2
+    TRANSIENT_BACKOFF_BASE = 1.5
 
-    def generate(self, prompt: str) -> str:
-        last_error = None
-        for model in self.models:
+    def __init__(self, api_key, models: List[str], base_url: str = None):
+        # Accept either a single key (legacy call sites, tests) or a list (multi-key
+        # rotation, mirroring GeminiProvider). A bare string is never iterated char-by-char.
+        self.api_keys = [api_key] if isinstance(api_key, str) else list(api_key)
+        if not self.api_keys:
+            raise ValueError("OpenAIProvider requires at least one API key")
+        self.current_key_idx = 0
+        self.models = models
+        self.base_url = base_url
+        self.is_openrouter = bool(base_url and "openrouter" in base_url)
+        self._init_client()
+
+    def _init_client(self):
+        import openai
+        key = self.api_keys[self.current_key_idx]
+        masked = key[:4] + "..." + key[-4:] if len(key) > 8 else "***"
+        provider_name = "OpenRouter" if self.is_openrouter else "OpenAI"
+        logger.info(f"{provider_name}: Initializing client with key #{self.current_key_idx + 1} ({masked})")
+        self.client = openai.OpenAI(api_key=key, base_url=self.base_url)
+
+    def _rotate_key(self) -> bool:
+        if self.current_key_idx + 1 < len(self.api_keys):
+            self.current_key_idx += 1
+            provider_name = "OpenRouter" if self.is_openrouter else "OpenAI"
+            logger.warning(f"{provider_name}: Rate limit hit. Rotating to key #{self.current_key_idx + 1}...")
+            self._init_client()
+            return True
+        provider_name = "OpenRouter" if self.is_openrouter else "OpenAI"
+        logger.error(f"{provider_name}: Rate limit hit and no more keys available.")
+        return False
+
+    def _generate_one(self, model: str, prompt: str) -> str:
+        """Attempt a single model, retrying in-place on transient errors before giving up."""
+        import time
+        last_exc = None
+        for attempt in range(self.TRANSIENT_MAX_RETRIES + 1):
             try:
-                logger.info(f"OpenAI/Compatible: Using model {model}...")
+                logger.info(f"OpenAI/Compatible: Trying model {model} with key #{self.current_key_idx + 1} (attempt {attempt + 1})...")
                 response = self.client.chat.completions.create(
                     model=model,
                     messages=[{"role": "user", "content": prompt}]
                 )
                 return response.choices[0].message.content
             except Exception as e:
-                logger.warning(f"Model {model} failed: {e}")
-                last_error = e
+                last_exc = e
+                is_transient = _matches_any(str(e), TRANSIENT_ERROR_PATTERNS)
+                if not is_transient or attempt >= self.TRANSIENT_MAX_RETRIES:
+                    raise
+                sleep_s = self.TRANSIENT_BACKOFF_BASE * (2 ** attempt)
+                logger.warning(
+                    f"OpenAI/Compatible model {model} transient error (attempt {attempt + 1}): {e}. "
+                    f"Retrying same model in {sleep_s:.1f}s..."
+                )
+                time.sleep(sleep_s)
+        raise last_exc
+
+    def generate(self, prompt: str) -> str:
+        """
+        Model cascade with multi-key rotation and transient-error retry, mirroring
+        GeminiProvider.generate(): try every model on the current key (each with in-place
+        transient retry), and only rotate to the next key once every model on this one has
+        been rate-limited.
+        """
+        last_error = None
+        while True:
+            all_rate_limited = True
+            for model in self.models:
+                try:
+                    return self._generate_one(model, prompt)
+                except Exception as e:
+                    error_str = str(e)
+                    last_error = e
+                    is_rate_limit = _matches_any(error_str, RATE_LIMIT_ERROR_PATTERNS)
+                    is_transient = _matches_any(error_str, TRANSIENT_ERROR_PATTERNS)
+                    if is_rate_limit:
+                        logger.warning(f"OpenAI/Compatible model {model} rate limited on key #{self.current_key_idx + 1}: {e}")
+                    elif is_transient:
+                        logger.warning(f"OpenAI/Compatible model {model} unavailable after retries: {e}. Falling through to next model.")
+                    else:
+                        logger.warning(f"Model {model} failed: {e}")
+                        all_rate_limited = False
+
+            if all_rate_limited:
+                if self._rotate_key():
+                    logger.info(f"OpenAI/Compatible: Retrying all models with key #{self.current_key_idx + 1}...")
+                    continue
+                raise RateLimitError(
+                    f"OpenAI/Compatible rate limit exceeded on all keys and all models. Last error: {last_error}",
+                    is_daily_limit=True,
+                    provider="openrouter" if self.is_openrouter else "openai",
+                )
+            break
+
         raise Exception(f"All models failed. Last error: {last_error}")
-        
+
     def list_models(self) -> List[str]:
         try:
             models = self.client.models.list()
             model_ids = [m.id for m in models.data]
-            
+
             if self.is_openrouter:
                  return sorted(model_ids)
             else:
@@ -473,16 +586,39 @@ class OpenAIProvider(LLMProvider):
             return []
 
 class AnthropicProvider(LLMProvider):
-    def __init__(self, api_key: str, models: List[str]):
-        import anthropic
-        self.client = anthropic.Anthropic(api_key=api_key)
-        self.models = models
+    TRANSIENT_MAX_RETRIES = 2
+    TRANSIENT_BACKOFF_BASE = 1.5
 
-    def generate(self, prompt: str) -> str:
-        last_error = None
-        for model in self.models:
+    def __init__(self, api_key, models: List[str]):
+        self.api_keys = [api_key] if isinstance(api_key, str) else list(api_key)
+        if not self.api_keys:
+            raise ValueError("AnthropicProvider requires at least one API key")
+        self.current_key_idx = 0
+        self.models = models
+        self._init_client()
+
+    def _init_client(self):
+        import anthropic
+        key = self.api_keys[self.current_key_idx]
+        masked = key[:4] + "..." + key[-4:] if len(key) > 8 else "***"
+        logger.info(f"Anthropic: Initializing client with key #{self.current_key_idx + 1} ({masked})")
+        self.client = anthropic.Anthropic(api_key=key)
+
+    def _rotate_key(self) -> bool:
+        if self.current_key_idx + 1 < len(self.api_keys):
+            self.current_key_idx += 1
+            logger.warning(f"Anthropic: Rate limit hit. Rotating to key #{self.current_key_idx + 1}...")
+            self._init_client()
+            return True
+        logger.error("Anthropic: Rate limit hit and no more keys available.")
+        return False
+
+    def _generate_one(self, model: str, prompt: str) -> str:
+        import time
+        last_exc = None
+        for attempt in range(self.TRANSIENT_MAX_RETRIES + 1):
             try:
-                logger.info(f"Anthropic: Using model {model}...")
+                logger.info(f"Anthropic: Trying model {model} with key #{self.current_key_idx + 1} (attempt {attempt + 1})...")
                 response = self.client.messages.create(
                     model=model,
                     max_tokens=4096,
@@ -490,10 +626,51 @@ class AnthropicProvider(LLMProvider):
                 )
                 return response.content[0].text
             except Exception as e:
-                logger.warning(f"Model {model} failed: {e}")
-                last_error = e
+                last_exc = e
+                is_transient = _matches_any(str(e), TRANSIENT_ERROR_PATTERNS)
+                if not is_transient or attempt >= self.TRANSIENT_MAX_RETRIES:
+                    raise
+                sleep_s = self.TRANSIENT_BACKOFF_BASE * (2 ** attempt)
+                logger.warning(
+                    f"Anthropic model {model} transient error (attempt {attempt + 1}): {e}. "
+                    f"Retrying same model in {sleep_s:.1f}s..."
+                )
+                time.sleep(sleep_s)
+        raise last_exc
+
+    def generate(self, prompt: str) -> str:
+        last_error = None
+        while True:
+            all_rate_limited = True
+            for model in self.models:
+                try:
+                    return self._generate_one(model, prompt)
+                except Exception as e:
+                    error_str = str(e)
+                    last_error = e
+                    is_rate_limit = _matches_any(error_str, RATE_LIMIT_ERROR_PATTERNS)
+                    is_transient = _matches_any(error_str, TRANSIENT_ERROR_PATTERNS)
+                    if is_rate_limit:
+                        logger.warning(f"Anthropic model {model} rate limited on key #{self.current_key_idx + 1}: {e}")
+                    elif is_transient:
+                        logger.warning(f"Anthropic model {model} unavailable after retries: {e}. Falling through to next model.")
+                    else:
+                        logger.warning(f"Model {model} failed: {e}")
+                        all_rate_limited = False
+
+            if all_rate_limited:
+                if self._rotate_key():
+                    logger.info(f"Anthropic: Retrying all models with key #{self.current_key_idx + 1}...")
+                    continue
+                raise RateLimitError(
+                    f"Anthropic rate limit exceeded on all keys and all models. Last error: {last_error}",
+                    is_daily_limit=True,
+                    provider="anthropic",
+                )
+            break
+
         raise Exception(f"All models failed. Last error: {last_error}")
-        
+
     def list_models(self) -> List[str]:
         return [
             "claude-3-5-sonnet-20241022",
@@ -602,15 +779,54 @@ class AdDetector:
             else: # Gemini
                 models_list = self._parse_model_setting(self.settings.get('ai_model_cascade'), self.DEFAULT_GEMINI_MODELS)
                 
+        # DB field names for each provider's multi-key JSON array + legacy single-key field
+        # + comma-separated env var — same three-source resolution Gemini has always had.
+        MULTI_KEY_SOURCES = {
+            'openai': ('openai_api_keys', 'openai_api_key', settings.OPENAI_API_KEY),
+            'anthropic': ('anthropic_api_keys', 'anthropic_api_key', settings.ANTHROPIC_API_KEY),
+            'openrouter': ('openrouter_api_keys', 'openrouter_api_key', settings.OPENROUTER_API_KEY),
+        }
+
+        def _resolve_api_keys(single_key: str) -> List[str]:
+            """Build the full rotation list for a non-Gemini provider from DB JSON array +
+            legacy single key + comma-separated env var, deduped and order-preserving.
+            Falls back to [single_key] if nothing else resolves, so a bare env/DB value
+            still works exactly as it did before rotation existed."""
+            db_field, legacy_field, env_val = MULTI_KEY_SOURCES[provider_type]
+            keys = []
+            db_keys_json = self.settings.get(db_field)
+            if db_keys_json:
+                try:
+                    parsed = json.loads(db_keys_json)
+                    if isinstance(parsed, list):
+                        keys.extend([k for k in parsed if k and k.strip()])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            legacy_key = self.settings.get(legacy_field)
+            if legacy_key and legacy_key not in keys:
+                keys.append(legacy_key)
+            if env_val:
+                for k in [k.strip() for k in env_val.split(',') if k.strip()]:
+                    if k not in keys:
+                        keys.append(k)
+            if not keys:
+                keys = [single_key]
+            return keys
+
         if provider_type == 'openai':
-            return OpenAIProvider(api_key, models_list)
-            
+            # An explicitly passed key (e.g. admin "Test connection") is the one under
+            # test — don't widen it to the saved DB/env keys, same rule as Gemini below.
+            keys = [explicit_api_key] if explicit_api_key else _resolve_api_keys(api_key)
+            return OpenAIProvider(keys, models_list)
+
         elif provider_type == 'anthropic':
-            return AnthropicProvider(api_key, models_list)
-            
+            keys = [explicit_api_key] if explicit_api_key else _resolve_api_keys(api_key)
+            return AnthropicProvider(keys, models_list)
+
         elif provider_type == 'openrouter':
-            return OpenAIProvider(api_key, models_list, base_url="https://openrouter.ai/api/v1")
-            
+            keys = [explicit_api_key] if explicit_api_key else _resolve_api_keys(api_key)
+            return OpenAIProvider(keys, models_list, base_url="https://openrouter.ai/api/v1")
+
         else: # Gemini
             # An explicitly passed key is the one under test — don't widen it to
             # the saved DB/env keys, or "Test connection" reports success for a
