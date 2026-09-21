@@ -20,7 +20,7 @@ Screenshot: Ad Report
 
 -   **Automatic Ad Detection**: Uses LLMs to intelligently identify ads, sponsor reads, and promotional segments.
     -   **Recommended: Google Gemini** — free tier, automatic multi-key failover, and transient error retry built in (see `app/core/ai_services.py`'s `GeminiProvider` for the failover/retry architecture).
-    -   **Also supported (less tested)**: OpenAI GPT-4, Anthropic Claude, OpenRouter (all require an API key; these providers currently have simpler flat model-list fallback with no multi-key rotation or transient-error retry).
+    -   **Also supported (less tested)**: OpenAI GPT-4, Anthropic Claude, OpenRouter (all require an API key). These providers now share the same multi-key rotation and transient-error retry architecture as Gemini (see `app/core/ai_services.py`'s `OpenAIProvider`/`AnthropicProvider`).
 -   **Audio Processing**: Uses **Whisper** for accurate transcription and **FFmpeg** for precise audio cutting.
 -   **Seamless Playback**: Generates custom RSS feeds for every subscription. Add them to your favorite podcast player (Apple Podcasts, Pocket Casts, etc.) to listen ad-free.
 -   **Smart Enhancements**: 
