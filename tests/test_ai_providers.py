@@ -148,3 +148,39 @@ class TestAnthropicProviderKeyRotation:
         provider = AnthropicProvider("key-a", ["claude-3-5-sonnet-20241022"])
         assert provider.generate("hello") == "recovered"
         assert client.messages.create.call_count == 2
+
+
+class TestAnthropicProviderListModels:
+    """
+    list_models() used to always return a hardcoded, unmaintained list of 2024-era model ids
+    (the admin "refresh models" dropdown at /admin/ai/refresh/anthropic never showed a model
+    released after that point). It now calls the live API, matching OpenAIProvider's pattern,
+    falling back to the old static list only when the call itself fails.
+    """
+
+    @patch("anthropic.Anthropic")
+    def test_lists_live_models_from_the_api_instead_of_the_hardcoded_2024_list(self, mock_anthropic_cls):
+        client = MagicMock()
+        mock_anthropic_cls.return_value = client
+        client.models.list.return_value = MagicMock(data=[
+            MagicMock(id="claude-sonnet-4-5-20260929"),
+            MagicMock(id="claude-3-5-sonnet-20241022"),
+        ])
+
+        provider = AnthropicProvider("key-a", ["claude-3-5-sonnet-20241022"])
+        models = provider.list_models()
+
+        assert "claude-sonnet-4-5-20260929" in models
+        client.models.list.assert_called_once()
+
+    @patch("anthropic.Anthropic")
+    def test_falls_back_to_the_static_list_when_the_live_call_fails(self, mock_anthropic_cls):
+        client = MagicMock()
+        mock_anthropic_cls.return_value = client
+        client.models.list.side_effect = Exception("network error")
+
+        provider = AnthropicProvider("key-a", ["claude-3-5-sonnet-20241022"])
+        models = provider.list_models()
+
+        assert models == AnthropicProvider._FALLBACK_MODELS
+        assert models is not AnthropicProvider._FALLBACK_MODELS  # caller gets a copy, not the shared list

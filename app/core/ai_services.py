@@ -671,14 +671,25 @@ class AnthropicProvider(LLMProvider):
 
         raise Exception(f"All models failed. Last error: {last_error}")
 
+    # Fallback only: used when the live models.list() call fails (bad key, network, or an
+    # anthropic SDK too old to have the endpoint). Do NOT treat this as the source of truth —
+    # it goes stale the moment Anthropic ships a new model, which is exactly the bug this
+    # method used to have unconditionally.
+    _FALLBACK_MODELS = [
+        "claude-3-5-sonnet-20241022",
+        "claude-3-5-haiku-20241022",
+        "claude-3-opus-20240229",
+        "claude-3-sonnet-20240229",
+        "claude-3-haiku-20240307"
+    ]
+
     def list_models(self) -> List[str]:
-        return [
-            "claude-3-5-sonnet-20241022",
-            "claude-3-5-haiku-20241022",
-            "claude-3-opus-20240229",
-            "claude-3-sonnet-20240229",
-            "claude-3-haiku-20240307"
-        ]
+        try:
+            models = self.client.models.list()
+            return sorted([m.id for m in models.data])
+        except Exception as e:
+            logger.error(f"Anthropic list models failed: {e}. Falling back to static list.")
+            return list(self._FALLBACK_MODELS)
 
 class AdDetector:
     # Default Gemini Cascade
