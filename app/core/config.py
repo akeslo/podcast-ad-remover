@@ -16,10 +16,12 @@ class Settings(BaseSettings):
     PODCAST_INDEX_API_KEY: str | None = Field(None, description="Podcast Index API key")
     PODCAST_INDEX_API_SECRET: str | None = Field(None, description="Podcast Index API secret")
     LOG_LEVEL: str = "INFO"
-    # No working default: a hardcoded default here is a public secret (it's in
-    # this repo's source), so anyone can forge a session cookie against it.
-    # Must be set via the SESSION_SECRET_KEY env var (e.g. `openssl rand -hex 32`).
-    SESSION_SECRET_KEY: str = Field(..., description="Secret key for session encryption. Required - no default.")
+    # Never a constant: a hardcoded default is a public secret (it's in this
+    # repo's source), so anyone could forge a session cookie against it.
+    # Resolved at startup by app.core.secrets_store.resolve_session_secret():
+    # this env var, else SESSION_SECRET_KEY_FILE, else a random key generated
+    # once and persisted under DATA_DIR/secrets/.
+    SESSION_SECRET_KEY: str | None = Field(None, description="Session signing key. Optional; generated and persisted if unset.")
     # The IP allowlist (app_settings.ip_allowlist) is the entire security boundary
     # in standalone/no-auth mode (see CLAUDE.local.md), and get_client_ip() honors
     # CF-Connecting-IP/X-Forwarded-For/X-Real-IP to support that allowlist behind a

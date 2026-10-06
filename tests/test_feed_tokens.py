@@ -58,8 +58,8 @@ def test_generate_feed_token_is_url_safe_and_unique():
 def test_schema_has_feed_token_columns():
     assert "feed_token" in _columns("users")
     assert "feed_auth_token" in _columns("app_settings")
-    # The old column is deliberately retained; removing it is a separate change.
-    assert "feed_auth_password" in _columns("app_settings")
+    # The plaintext feed-password column is purged by init_db().
+    assert "feed_auth_password" not in _columns("app_settings")
 
 
 def test_migration_is_idempotent(user_id):

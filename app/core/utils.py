@@ -85,7 +85,8 @@ def get_global_settings():
         try:
             row = conn.execute("SELECT * FROM app_settings WHERE id = 1").fetchone()
             if row:
-                return dict(row)
+                from app.core.secrets_store import decrypt_settings
+                return decrypt_settings(row)
         except Exception:
             pass
     return {}

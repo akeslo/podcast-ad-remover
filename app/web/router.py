@@ -141,7 +141,8 @@ def get_global_settings():
     with get_db_connection() as conn:
         row = conn.execute("SELECT * FROM app_settings WHERE id = 1").fetchone()
         if row:
-            return dict(row)
+            from app.core.secrets_store import decrypt_settings
+            return decrypt_settings(row)
     return {}
 
 from app.core.utils import get_app_base_url
@@ -640,10 +641,14 @@ async def admin_system(request: Request):
     from app.core.config import settings as env_settings
 
     user = get_current_user(request)
+    from app.core.secrets_store import mask_settings_for_display
+
     return templates.TemplateResponse(request, "admin/system.html", {
         "csp_nonce": get_csp_nonce(request),
         "user": user,
-        "settings": get_global_settings(),
+        # Saved secrets are replaced by a sentinel; the real values never
+        # reach the page.
+        "settings": mask_settings_for_display(get_global_settings()),
         "pending_requests_count": get_pending_requests_count(),
         "active_tab": "system",
         # Whether the .env fallback is populated, so the page can say what
@@ -679,8 +684,8 @@ async def update_system_settings(
 
     # The submitted feed password is deliberately ignored and never stored.
     # Feed access is authenticated by a random feed token, not by any
-    # password. The feed_auth_password column is left untouched here (dropping
-    # it is a separate change); nothing reads it any more.
+    # password; init_db() clears and drops the legacy feed_auth_password
+    # column.
     del feed_auth_password
 
     # Standalone feed auth needs a username plus an install-wide feed token.
@@ -733,12 +738,25 @@ async def update_system_settings(
         # "leave alone" - otherwise there is no way to clear a wrong key from
         # the UI. Whitespace is stripped because a stray trailing space in an
         # API secret produces a signature that fails with no useful error.
-        pi_key = (podcast_index_api_key or "").strip() or None
-        pi_secret = (podcast_index_api_secret or "").strip() or None
-        old_creds = conn.execute(
+        # The form shows a sentinel in place of a saved value; submitting it
+        # back keeps what is stored.
+        from app.core.secrets_store import (
+            decrypt_settings,
+            encrypt_secret,
+            resolve_submitted,
+        )
+        old_creds = decrypt_settings(conn.execute(
             "SELECT podcast_index_api_key, podcast_index_api_secret "
             "FROM app_settings WHERE id = 1"
-        ).fetchone()
+        ).fetchone()) or None
+        pi_key = resolve_submitted(
+            podcast_index_api_key or "",
+            old_creds["podcast_index_api_key"] if old_creds else None,
+        )
+        pi_secret = resolve_submitted(
+            podcast_index_api_secret or "",
+            old_creds["podcast_index_api_secret"] if old_creds else None,
+        )
         creds_changed = bool(old_creds) and (
             old_creds["podcast_index_api_key"] != pi_key
             or old_creds["podcast_index_api_secret"] != pi_secret
@@ -762,7 +780,7 @@ async def update_system_settings(
               1 if auth_enabled else 0, ip_allowlist,
               1 if enable_feed_auth else 0,
               feed_auth_username if feed_auth_username else None,
-              pi_key, pi_secret))
+              encrypt_secret(pi_key), encrypt_secret(pi_secret)))
         conn.commit()
 
     # Cached discovery payloads were fetched with the previous credentials and
@@ -809,10 +827,14 @@ async def admin_ai(request: Request):
 
     user = get_current_user(request)
 
+    from app.core.secrets_store import mask_settings_for_display
+
     return templates.TemplateResponse(request, "admin/ai.html", {
         "csp_nonce": get_csp_nonce(request),
         "user": user,
-        "settings": get_global_settings(),
+        # Saved API keys are replaced by a sentinel; the real values never
+        # reach the page. Submitting the sentinel back keeps the stored key.
+        "settings": mask_settings_for_display(get_global_settings()),
         "pending_requests_count": get_pending_requests_count(),
         "active_tab": "ai",
         "env_keys": env_keys
@@ -840,18 +862,37 @@ async def update_ai_settings(
     except (json.JSONDecodeError, TypeError, ValueError):
         ai_model_cascade = '["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"]'
 
+    from app.core.secrets_store import (
+        decrypt_settings,
+        encrypt_secret,
+        encrypt_secret_list_json,
+        resolve_submitted,
+        resolve_submitted_list,
+    )
+
     # Validate gemini_api_keys is valid JSON array
+    parsed_keys = []
     if gemini_api_keys:
         try:
             parsed_keys = json.loads(gemini_api_keys)
             if not isinstance(parsed_keys, list):
-                gemini_api_keys = "[]"
+                parsed_keys = []
         except (json.JSONDecodeError, TypeError, ValueError):
-            gemini_api_keys = "[]"
-    else:
-        gemini_api_keys = "[]"
+            parsed_keys = []
 
     with get_db_connection() as conn:
+        stored = decrypt_settings(conn.execute(
+            "SELECT openai_api_key, anthropic_api_key, openrouter_api_key, "
+            "gemini_api_keys FROM app_settings WHERE id = 1"
+        ).fetchone())
+        # Saved keys are rendered as a sentinel; map it back to the stored
+        # value, then encrypt everything before it touches the database.
+        openai_api_key = encrypt_secret(resolve_submitted(openai_api_key, stored.get("openai_api_key")))
+        anthropic_api_key = encrypt_secret(resolve_submitted(anthropic_api_key, stored.get("anthropic_api_key")))
+        openrouter_api_key = encrypt_secret(resolve_submitted(openrouter_api_key, stored.get("openrouter_api_key")))
+        gemini_api_keys = encrypt_secret_list_json(json.dumps(
+            resolve_submitted_list(parsed_keys, stored.get("gemini_api_keys"))
+        ))
         conn.execute("""
             UPDATE app_settings 
             SET whisper_model = ?,
@@ -883,7 +924,13 @@ async def test_ai_connection(
 ):
     try:
         from app.core.ai_services import AdDetector
+        from app.core.secrets_store import SAVED_SENTINEL
         detector = AdDetector()
+
+        # The page only holds a sentinel for a saved key; fall back to the
+        # stored key in that case.
+        if api_key and api_key.strip().startswith(SAVED_SENTINEL):
+            api_key = None
         
         # Create provider slightly differently depending on type to pass correct args
         # But our factory method handles it if we pass inputs

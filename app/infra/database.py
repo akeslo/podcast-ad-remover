@@ -95,9 +95,11 @@ def init_db():
         
         enable_feed_auth INTEGER DEFAULT 0,
         feed_auth_username TEXT,
-        feed_auth_password TEXT,
-        -- Standalone/global feed bearer token. Replaces reliance on
-        -- feed_auth_password for feed URLs. Stored retrievably on purpose:
+        -- NOTE: `feed_auth_password` is deliberately absent. It held a
+        -- plaintext feed password nothing reads any more; it is cleared and
+        -- dropped on upgrade below. Do not re-add it.
+        -- Standalone/global feed bearer token. Replaces the old feed
+        -- password for feed URLs. Stored retrievably on purpose:
         -- see the note on users.feed_token below.
         feed_auth_token TEXT,
 
@@ -277,7 +279,7 @@ Transcript Context: {transcript_context}""",))
         "ALTER TABLE app_settings ADD COLUMN app_external_url TEXT",
         "ALTER TABLE app_settings ADD COLUMN enable_feed_auth INTEGER DEFAULT 0",
         "ALTER TABLE app_settings ADD COLUMN feed_auth_username TEXT",
-        "ALTER TABLE app_settings ADD COLUMN feed_auth_password TEXT",
+        # `feed_auth_password` used to be added here; it is now purged below.
         "ALTER TABLE app_settings ADD COLUMN auth_enabled INTEGER DEFAULT 0",
         "ALTER TABLE app_settings ADD COLUMN require_password_change INTEGER DEFAULT 0",
         # `ALTER TABLE app_settings ADD COLUMN initial_password TEXT` used to
@@ -308,8 +310,6 @@ Transcript Context: {transcript_context}""",))
         "ALTER TABLE app_settings ADD COLUMN gemini_api_keys TEXT",
 
         # Feed tokens: replace the password-derived ?auth= feed credential.
-        # feed_auth_password is intentionally NOT dropped here - removing it
-        # is a separate change.
         "ALTER TABLE users ADD COLUMN feed_token TEXT",
         "ALTER TABLE app_settings ADD COLUMN feed_auth_token TEXT",
 
@@ -357,19 +357,56 @@ Transcript Context: {transcript_context}""",))
     settings_columns = {
         row[1] for row in cursor.execute("PRAGMA table_info(app_settings)")
     }
-    if "initial_password" in settings_columns:
-        # Unconditional: no WHERE, no "only if non-empty". Cheap, and it cannot
-        # be fooled by a value this code failed to anticipate.
-        cursor.execute("UPDATE app_settings SET initial_password = NULL")
+    # `feed_auth_password` is the same shape: a plaintext feed password left
+    # on upgraded installs after feed tokens replaced it. Same two steps.
+    for legacy_col in ("initial_password", "feed_auth_password"):
+        if legacy_col not in settings_columns:
+            continue
+        # Unconditional: no WHERE, no "only if non-empty". Cheap, and it
+        # cannot be fooled by a value this code failed to anticipate.
+        cursor.execute(f"UPDATE app_settings SET {legacy_col} = NULL")
         if sqlite3.sqlite_version_info >= (3, 35, 0):
             try:
                 cursor.execute(
-                    "ALTER TABLE app_settings DROP COLUMN initial_password"
+                    f"ALTER TABLE app_settings DROP COLUMN {legacy_col}"
                 )
             except sqlite3.OperationalError:
                 # Older/odd SQLite builds, or the column is referenced by
                 # something. Already cleared above; leave it.
                 pass
+
+    # Encrypt provider API keys that are still stored in clear. Idempotent:
+    # already-encrypted values (enc:v1: prefix) are left alone.
+    from app.core.secrets_store import (
+        SECRET_COLUMNS,
+        SECRET_LIST_COLUMNS,
+        encrypt_secret,
+        encrypt_secret_list_json,
+    )
+    settings_columns = {
+        row[1] for row in cursor.execute("PRAGMA table_info(app_settings)")
+    }
+    rows = cursor.execute("SELECT * FROM app_settings").fetchall()
+    names = [d[0] for d in cursor.description]
+    for row in rows:
+        row = dict(zip(names, row))
+        updates = {}
+        for col in SECRET_COLUMNS:
+            if col in settings_columns and row.get(col):
+                enc = encrypt_secret(row[col])
+                if enc != row[col]:
+                    updates[col] = enc
+        for col in SECRET_LIST_COLUMNS:
+            if col in settings_columns and row.get(col):
+                enc = encrypt_secret_list_json(row[col])
+                if enc != row[col]:
+                    updates[col] = enc
+        if updates:
+            assignments = ", ".join(f"{c} = ?" for c in updates)
+            cursor.execute(
+                f"UPDATE app_settings SET {assignments} WHERE id = ?",
+                (*updates.values(), row["id"]),
+            )
 
     # Backfill: every existing user must end up with a working feed token,
     # otherwise their feeds break the moment password-based auth is removed.
