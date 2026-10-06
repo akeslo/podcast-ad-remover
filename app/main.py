@@ -201,9 +201,9 @@ app = FastAPI(
     redoc_url="/api/redoc" if settings.ENVIRONMENT != "production" else None  # Hide redoc in production
 )
 
-# SESSION_SECRET_KEY has no working default (app.core.config.Settings) - the
-# app fails to start at import time if it is unset, so no runtime check is
-# needed here anymore.
+# SESSION_SECRET_KEY has no default in source. If unset it is read from
+# SESSION_SECRET_KEY_FILE or generated randomly and persisted once.
+from app.core.secrets_store import resolve_session_secret
 
 # Add middleware (order matters - added in reverse of execution order)
 # Execution order: SecurityHeadersMiddleware -> SessionMiddleware -> auth_middleware -> feed_auth_middleware
@@ -211,7 +211,7 @@ app.middleware("http")(feed_auth_middleware)
 app.middleware("http")(auth_middleware)
 app.add_middleware(
     SessionMiddleware, 
-    secret_key=settings.SESSION_SECRET_KEY,
+    secret_key=resolve_session_secret(settings.SESSION_SECRET_KEY),
     max_age=30 * 24 * 60 * 60,  # 30 days in seconds
     session_cookie="session",
     same_site="lax",  # Prevents CSRF while allowing external navigation

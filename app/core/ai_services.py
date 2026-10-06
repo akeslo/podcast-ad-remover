@@ -709,7 +709,9 @@ class AdDetector:
         try:
             with get_db_connection() as conn:
                 row = conn.execute("SELECT * FROM app_settings WHERE id = 1").fetchone()
-                if row: return dict(row)
+                if row:
+                    from app.core.secrets_store import decrypt_settings
+                    return decrypt_settings(row)
         except Exception:
             pass
         return {}
@@ -1069,6 +1071,8 @@ class AdDetector:
             with get_db_connection() as conn:
                 row = conn.execute("SELECT gemini_api_keys, gemini_api_key FROM app_settings WHERE id = 1").fetchone()
                 if row:
+                    from app.core.secrets_store import decrypt_settings
+                    row = decrypt_settings(row)
                     # Try new multi-key field first
                     if row['gemini_api_keys']:
                         try:

@@ -265,8 +265,6 @@ def test_standalone_feed_url_uses_the_global_token():
 
 def test_settings_save_never_stores_a_feed_password(client):
     """The submitted feed password is ignored, not persisted."""
-    _set_settings(feed_auth_password=None)
-
     client.post(
         "/admin/system/update",
         data={
@@ -282,10 +280,9 @@ def test_settings_save_never_stores_a_feed_password(client):
     )
 
     with get_db_connection() as conn:
-        row = conn.execute(
-            "SELECT feed_auth_password FROM app_settings WHERE id = 1"
-        ).fetchone()
-    assert row["feed_auth_password"] != TEST_PASSWORD
+        row = conn.execute("SELECT * FROM app_settings WHERE id = 1").fetchone()
+    assert "feed_auth_password" not in row.keys()
+    assert TEST_PASSWORD not in [str(v) for v in tuple(row)]
 
 
 # --------------------------------------------------------------------------

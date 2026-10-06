@@ -85,6 +85,8 @@ def get_credentials() -> Tuple[Optional[str], Optional[str]]:
                 "FROM app_settings WHERE id = 1"
             ).fetchone()
         if row:
+            from app.core.secrets_store import decrypt_settings
+            row = decrypt_settings(row)
             db_key = row["podcast_index_api_key"]
             db_secret = row["podcast_index_api_secret"]
     except Exception as e:  # pragma: no cover - DB unavailable/pre-migration
