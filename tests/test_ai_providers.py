@@ -184,3 +184,22 @@ class TestAnthropicProviderListModels:
 
         assert models == AnthropicProvider._FALLBACK_MODELS
         assert models is not AnthropicProvider._FALLBACK_MODELS  # caller gets a copy, not the shared list
+
+
+class TestOllamaProvider:
+    def _detector(self, s):
+        from app.core.ai_services import AdDetector
+        with patch.object(AdDetector, "_load_settings", return_value=s):
+            return AdDetector()
+
+    def test_builds_openai_compatible_client_without_key(self):
+        with patch("openai.OpenAI") as client:
+            prov = self._detector({"ollama_base_url": "http://ks:11434/", "ollama_model": '["gpt-oss:20b"]'}).create_provider("ollama")
+        assert prov.models == ["gpt-oss:20b"]
+        assert client.call_args.kwargs["base_url"] == "http://ks:11434/v1"
+        assert client.call_args.kwargs["timeout"] == 1800
+
+    def test_missing_url_raises(self):
+        with patch("app.core.ai_services.settings.OLLAMA_BASE_URL", None):
+            with pytest.raises(ValueError, match="Ollama URL"):
+                self._detector({}).create_provider("ollama")

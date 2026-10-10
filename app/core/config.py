@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str | None = Field(None, description="OpenAI API Key")
     ANTHROPIC_API_KEY: str | None = Field(None, description="Anthropic API Key")
     OPENROUTER_API_KEY: str | None = Field(None, description="OpenRouter API Key")
+    OLLAMA_BASE_URL: str | None = Field(None, description="Ollama server URL, e.g. http://192.168.20.11:11434")
     # Podcast Index (api.podcastindex.org) credentials, used for podcast
     # search and the trending/browse discovery surfaces. These seed an
     # install; the operator-editable values in app_settings take precedence

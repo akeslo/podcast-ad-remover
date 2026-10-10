@@ -477,7 +477,7 @@ class OpenAIProvider(LLMProvider):
     TRANSIENT_MAX_RETRIES = 2
     TRANSIENT_BACKOFF_BASE = 1.5
 
-    def __init__(self, api_key, models: List[str], base_url: str = None):
+    def __init__(self, api_key, models: List[str], base_url: str = None, timeout: float = None):
         # Accept either a single key (legacy call sites, tests) or a list (multi-key
         # rotation, mirroring GeminiProvider). A bare string is never iterated char-by-char.
         self.api_keys = [api_key] if isinstance(api_key, str) else list(api_key)
@@ -487,6 +487,7 @@ class OpenAIProvider(LLMProvider):
         self.models = models
         self.base_url = base_url
         self.is_openrouter = bool(base_url and "openrouter" in base_url)
+        self.timeout = timeout
         self._init_client()
 
     def _init_client(self):
@@ -495,7 +496,8 @@ class OpenAIProvider(LLMProvider):
         masked = key[:4] + "..." + key[-4:] if len(key) > 8 else "***"
         provider_name = "OpenRouter" if self.is_openrouter else "OpenAI"
         logger.info(f"{provider_name}: Initializing client with key #{self.current_key_idx + 1} ({masked})")
-        self.client = openai.OpenAI(api_key=key, base_url=self.base_url)
+        kwargs = {"timeout": self.timeout} if self.timeout else {}
+        self.client = openai.OpenAI(api_key=key, base_url=self.base_url, **kwargs)
 
     def _rotate_key(self) -> bool:
         if self.current_key_idx + 1 < len(self.api_keys):
@@ -577,7 +579,7 @@ class OpenAIProvider(LLMProvider):
             models = self.client.models.list()
             model_ids = [m.id for m in models.data]
 
-            if self.is_openrouter:
+            if self.base_url:  # OpenRouter / Ollama: every model is usable
                  return sorted(model_ids)
             else:
                 return sorted([m for m in model_ids if m.startswith(("gpt-", "o1-", "chatgpt-"))])
@@ -736,6 +738,18 @@ class AdDetector:
         # Gemini branch below otherwise rebuilds the list from DB + env and
         # silently tests the previously saved key instead.
         explicit_api_key = api_key if api_key else None
+
+        if provider_type == 'ollama':
+            # Local server, no key. Uses Ollama's OpenAI-compatible /v1 endpoint;
+            # context length is the server's OLLAMA_CONTEXT_LENGTH.
+            base_url = self.settings.get('ollama_base_url') or settings.OLLAMA_BASE_URL
+            if not base_url:
+                raise ValueError("No Ollama URL set (Admin > AI or OLLAMA_BASE_URL)")
+            models_list = (self._parse_model_setting(model, []) if model else
+                           self._parse_model_setting(self.settings.get('ollama_model'), ['gpt-oss:20b']))
+            # Local inference on a long transcript can take many minutes.
+            return OpenAIProvider(["ollama"], models_list,
+                                  base_url=base_url.rstrip('/') + "/v1", timeout=1800)
 
         # Resolve keys (DB Overrides Env)
         if not api_key:
@@ -1130,6 +1144,7 @@ class AdDetector:
         if s.get('openai_api_key') or settings.OPENAI_API_KEY: return True
         if s.get('anthropic_api_key') or settings.ANTHROPIC_API_KEY: return True
         if s.get('openrouter_api_key') or settings.OPENROUTER_API_KEY: return True
+        if s.get('ollama_base_url') or settings.OLLAMA_BASE_URL: return True
         
         return False
 
