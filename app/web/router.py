@@ -822,7 +822,8 @@ async def admin_ai(request: Request):
         "GEMINI_API_KEY": bool(settings.GEMINI_API_KEY),
         "OPENAI_API_KEY": bool(settings.OPENAI_API_KEY),
         "ANTHROPIC_API_KEY": bool(settings.ANTHROPIC_API_KEY),
-        "OPENROUTER_API_KEY": bool(settings.OPENROUTER_API_KEY)
+        "OPENROUTER_API_KEY": bool(settings.OPENROUTER_API_KEY),
+        "OLLAMA_BASE_URL": bool(settings.OLLAMA_BASE_URL)
     }
 
     user = get_current_user(request)
@@ -853,7 +854,9 @@ async def update_ai_settings(
     gemini_api_keys: str = Form(None),
     openai_model: str = Form("gpt-4o"),
     anthropic_model: str = Form("claude-3-5-sonnet"),
-    openrouter_model: str = Form("google/gemini-2.0-flash-001")
+    openrouter_model: str = Form("google/gemini-2.0-flash-001"),
+    ollama_base_url: str = Form(None),
+    ollama_model: str = Form('["gpt-oss:20b"]')
 ):
     from app.infra.database import get_db_connection
     import json
@@ -906,12 +909,15 @@ async def update_ai_settings(
                 openai_model = ?,
                 anthropic_model = ?,
                 openrouter_model = ?,
+                ollama_base_url = ?,
+                ollama_model = ?,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = 1
         """, (
             whisper_model, ai_model_cascade, piper_model, active_ai_provider,
             openai_api_key, anthropic_api_key, openrouter_api_key, gemini_api_keys,
-            openai_model, anthropic_model, openrouter_model
+            openai_model, anthropic_model, openrouter_model,
+            (ollama_base_url or "").strip() or None, ollama_model
         ))
         conn.commit()
     return RedirectResponse(url="/admin/ai", status_code=303)

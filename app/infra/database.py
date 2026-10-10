@@ -91,6 +91,8 @@ def init_db():
         openai_model TEXT DEFAULT 'gpt-4o',
         anthropic_model TEXT DEFAULT 'claude-3-5-sonnet',
         openrouter_model TEXT DEFAULT 'google/gemini-2.0-flash-001',
+        ollama_base_url TEXT,
+        ollama_model TEXT DEFAULT 'gpt-oss:20b',
         app_external_url TEXT,
         
         enable_feed_auth INTEGER DEFAULT 0,
@@ -274,6 +276,8 @@ Transcript Context: {transcript_context}""",))
         "ALTER TABLE app_settings ADD COLUMN openai_model TEXT DEFAULT 'gpt-4o'",
         "ALTER TABLE app_settings ADD COLUMN anthropic_model TEXT DEFAULT 'claude-3-5-sonnet'",
         "ALTER TABLE app_settings ADD COLUMN openrouter_model TEXT DEFAULT 'google/gemini-2.0-flash-001'",
+        "ALTER TABLE app_settings ADD COLUMN ollama_base_url TEXT",
+        "ALTER TABLE app_settings ADD COLUMN ollama_model TEXT DEFAULT 'gpt-oss:20b'",
         "ALTER TABLE episodes ADD COLUMN processing_flags TEXT",
         "ALTER TABLE app_settings ADD COLUMN gemini_api_key TEXT",
         "ALTER TABLE app_settings ADD COLUMN app_external_url TEXT",
