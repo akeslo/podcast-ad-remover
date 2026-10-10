@@ -31,3 +31,6 @@ Thumbs.db
 # Node
 node_modules/
 CLAUDE.local.md
+
+# Claude Code local state
+.claude/
