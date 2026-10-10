@@ -15,4 +15,5 @@ piper-tts==1.2.0; sys_platform == "linux"
 bcrypt
 cryptography
 itsdangerous
-yt-dlp>=2026.8.19
+yt-dlp[default]>=2026.8.19
+deno>=2.3

@@ -998,7 +998,13 @@ class Processor:
                 next_retry = rate_error.get_next_retry_time()
                 self.ep_repo.update_rate_limited(ep.id, next_retry, str(e))
                 return
-            
+
+            # Members-only YouTube videos can never be downloaded; don't retry
+            if 'members-only content' in error_str or "available to this channel's members" in error_str:
+                logger.info(f"Ignoring members-only video: {ep.title}")
+                self.ep_repo.update_status(ep.id, "ignored", error=str(e))
+                return
+
             # Regular Retry Logic
             retry_count = ep_dict.get('retry_count', 0) + 1
             if retry_count <= 5:
