@@ -453,3 +453,23 @@ def test_requeue_stuck_stamps_processed_at(db):
 
     # And having just failed, it is inside the grace window, so nothing reclaims it.
     assert _selected(db)[0] == []
+
+
+def test_requeue_stuck_schedules_retry_until_cap(db):
+    """A restart (e.g. a deploy) must not permanently fail an in-flight episode."""
+    _add_sub(db, 1, "show", retention_limit=1)
+    _add_ep(db, 11, 1, "running", status="processing", pub_date=_days_ago(1))
+    _add_ep(db, 12, 1, "worn", status="processing", pub_date=_days_ago(1))
+    conn = sqlite3.connect(db)
+    conn.execute("UPDATE episodes SET retry_count = 5 WHERE id = 12")
+    conn.commit()
+    conn.close()
+
+    from app.infra.repository import EpisodeRepository
+    EpisodeRepository().requeue_stuck()
+
+    conn = sqlite3.connect(db)
+    rows = dict(conn.execute("SELECT id, next_retry_at FROM episodes").fetchall())
+    conn.close()
+    assert rows[11] is not None
+    assert rows[12] is None

@@ -225,7 +225,8 @@ class EpisodeRepository:
             conn.commit()
 
     def requeue_stuck(self):
-        """Reset all 'processing' episodes to 'failed' on startup."""
+        """Reset all 'processing' episodes on startup. An interruption counts as
+        one retry and is due immediately; after 5 it is terminal, like any failure."""
         with get_db_connection() as conn:
             conn.execute("""
                 UPDATE episodes
@@ -233,7 +234,9 @@ class EpisodeRepository:
                     error_message = 'Interrupted by system restart',
                     processing_step = 'interrupted',
                     progress = 0,
-                    next_retry_at = NULL,
+                    retry_count = COALESCE(retry_count, 0) + 1,
+                    next_retry_at = CASE WHEN COALESCE(retry_count, 0) < 5
+                                         THEN CURRENT_TIMESTAMP ELSE NULL END,
                     -- Stamp the terminal transition. Every other path into
                     -- 'failed' goes through update_status(), which sets
                     -- processed_at; this raw UPDATE did not, leaving the row
