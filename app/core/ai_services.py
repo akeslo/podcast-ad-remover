@@ -14,6 +14,10 @@ logger = logging.getLogger(__name__)
 # Minimum silence between consecutive transcript segments before the ad
 # prompt renders an explicit "no transcribed speech" marker line.
 GAP_MARKER_SECONDS = 8.0
+# Ollama window: ~15k tokens of transcript, leaving room in a 32k server context
+# for the prompt and gpt-oss reasoning output. Overlap covers a boundary ad.
+OLLAMA_CHUNK_CHARS = 60000
+OLLAMA_CHUNK_OVERLAP_S = 120.0
 
 # Shared error-classification patterns, matched case-insensitively against str(exception).
 # Kept as one module-level list per class (rather than copy-pasted into each provider) so
@@ -904,17 +908,25 @@ class AdDetector:
                 "remove_ads": True, "remove_promos": True, "remove_intros": False, "remove_outros": False, "custom_instructions": None
             }
 
-        # Prepare transcript text
-        text_data = self._render_transcript(transcript['segments'])
-
-        # Build Prompt
-        prompt = self._build_ad_prompt(options, text_data)
+        # Local models have a fixed server context that silently truncates a long
+        # prompt, so Ollama gets the transcript in overlapping windows. Timestamps
+        # are absolute and overlapping cuts are merged downstream.
+        segments = transcript['segments']
+        if self.settings.get('active_ai_provider') == 'ollama':
+            chunks = self._chunk_segments(segments, OLLAMA_CHUNK_CHARS, OLLAMA_CHUNK_OVERLAP_S)
+        else:
+            chunks = [segments]
 
         # Execute
         try:
             provider = self._get_provider()
-            response_text = provider.generate(prompt)
-            raw_segments = self._parse_ad_response(response_text)
+            raw_segments = []
+            for i, chunk in enumerate(chunks):
+                if len(chunks) > 1:
+                    logger.info(f"Ad detection chunk {i + 1}/{len(chunks)} "
+                                f"({chunk[0]['start']:.0f}-{chunk[-1]['end']:.0f} s)")
+                prompt = self._build_ad_prompt(options, self._render_transcript(chunk))
+                raw_segments.extend(self._parse_ad_response(provider.generate(prompt)))
             
             # Filter to only include requested types and exclude 'Content'
             removable_labels = []
@@ -990,6 +1002,25 @@ class AdDetector:
             raise
 
     # --- Helpers ---
+    @staticmethod
+    def _chunk_segments(segments: List[Dict], max_chars: int, overlap_s: float) -> List[List[Dict]]:
+        """Split segments into windows whose rendered text stays under max_chars;
+        each window after the first re-includes the last overlap_s seconds of
+        the previous one so an ad straddling a boundary is seen whole."""
+        chunks, current, size = [], [], 0
+        for seg in segments:
+            line = len(seg['text']) + 24  # timestamp prefix
+            if current and size + line > max_chars:
+                chunks.append(current)
+                cutoff = float(current[-1]['end']) - overlap_s
+                current = [x for x in current if float(x['start']) >= cutoff]
+                size = sum(len(x['text']) + 24 for x in current)
+            current.append(seg)
+            size += line
+        if current:
+            chunks.append(current)
+        return chunks
+
     @staticmethod
     def _render_transcript(segments: List[Dict]) -> str:
         """Render timestamped transcript lines for the ad prompt.

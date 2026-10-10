@@ -124,3 +124,34 @@ class TestTranscriptRenderingGapMarker:
         with patch.object(detector, "_get_provider", return_value=FakeProvider()):
             detector.detect_ads({"segments": TRANSCRIPT_24019})
         assert "[59.92-86.16] <26 s of audio with no transcribed speech" in captured["prompt"]
+
+
+class TestOllamaChunking:
+    def _segs(self, n, secs=10.0, text="x" * 76):
+        return [{"start": i * secs, "end": (i + 1) * secs, "text": text} for i in range(n)]
+
+    def test_short_transcript_is_one_chunk(self):
+        assert len(AdDetector._chunk_segments(self._segs(10), 60000, 120)) == 1
+
+    def test_chunks_respect_budget_and_overlap(self):
+        segs = self._segs(2000)  # 100 chars/line -> 200k chars
+        chunks = AdDetector._chunk_segments(segs, 60000, 120)
+        assert len(chunks) >= 4
+        assert all(sum(len(s["text"]) + 24 for s in c) <= 60000 for c in chunks)
+        for prev, nxt in zip(chunks, chunks[1:]):
+            assert prev[-1]["end"] - nxt[0]["start"] >= 110  # ~120 s re-seen
+        assert chunks[-1][-1] is segs[-1]
+
+    def test_ollama_detect_ads_calls_provider_per_chunk(self):
+        with patch.object(AdDetector, "_load_settings", return_value={"active_ai_provider": "ollama"}):
+            detector = AdDetector()
+            calls = []
+
+            class FakeProvider:
+                def generate(self, prompt):
+                    calls.append(prompt)
+                    return "[]"
+
+            with patch.object(AdDetector, "_get_provider", return_value=FakeProvider()):
+                detector.detect_ads({"segments": self._segs(2000)})
+        assert len(calls) >= 4

@@ -171,8 +171,8 @@
                     {% if env_keys.OLLAMA_BASE_URL %}
                     <p class="text-xs text-emerald-400">✓ Environment Variable Detected</p>
                     {% endif %}
-                    <p class="text-xs text-text-muted mt-1">Long episodes need a large server context
-                        (OLLAMA_CONTEXT_LENGTH); a truncated transcript misses ads.</p>
+                    <p class="text-xs text-text-muted mt-1">Long transcripts are sent in ~15k-token windows,
+                        so the server needs OLLAMA_CONTEXT_LENGTH of at least 32768.</p>
                 </div>
                 {{ shuttle_ui('ollama', 'Ollama Model Cascade', 'ollama_model', settings.ollama_model | tojson) }}
             </div>
