@@ -20,6 +20,21 @@ import yt_dlp
 
 logger = logging.getLogger(__name__)
 
+MAX_HOST_MEM_USED = 0.75  # host is shared with a VM; dont start ffmpeg-heavy jobs past this
+
+
+def host_mem_used_fraction(path: str = "/proc/meminfo") -> float:
+    """Fraction of host RAM in use (containers see host /proc/meminfo). 0.0 if unreadable."""
+    try:
+        info = {}
+        with open(path) as f:
+            for line in f:
+                k, v = line.split(":", 1)
+                info[k] = int(v.split()[0])
+        return 1 - info["MemAvailable"] / info["MemTotal"]
+    except (OSError, KeyError, ValueError, ZeroDivisionError):
+        return 0.0
+
 class Processor:
     _active_task_ids = set()
     _queue_lock = asyncio.Lock()  # Prevent race conditions in process_queue
@@ -271,6 +286,12 @@ class Processor:
             # 2. Check if we have room using DATABASE count (cross-process safe)
             currently_processing = self.ep_repo.count_processing()
             if currently_processing >= limit:
+                return
+
+            # 2b. Wait (leave episodes pending) while host memory is tight
+            used = host_mem_used_fraction()
+            if used > MAX_HOST_MEM_USED:
+                logger.warning(f"Host memory {used:.0%} used, deferring new jobs")
                 return
 
             # 3. Get pending episodes
