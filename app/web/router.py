@@ -1119,6 +1119,55 @@ async def retry_episode(episode_id: int):
     ep_repo.update_status(episode_id, "pending")
     return RedirectResponse(url="/admin/queue", status_code=303)
 
+
+@router.post("/admin/queue/retry-all", dependencies=[Depends(require_admin_action)])
+async def retry_all_queue(request: Request, background_tasks: BackgroundTasks):
+    """Re-queue every live-queue item that is not already processing.
+
+    One bulk UPDATE covers the whole queue in a single DB operation: every
+    episode whose status is pending, failed or rate_limited goes back to
+    'pending' with next_retry_at cleared, so nothing sits waiting out a backoff
+    window. 'processing' rows are left alone (their work is already in flight,
+    and the claim in process_queue is made with condition_status elsewhere);
+    'ignored' (cancelled) rows stay cancelled, because this retries the live
+    queue and does not resurrect something deliberately dismissed.
+
+    The background processor is then kicked immediately via BackgroundTasks, the
+    same way /add and /subscriptions/{id}/settings do, rather than waiting for
+    the next poll. The redirect carries a short note: how many were re-queued,
+    or an honest message when the queue had nothing eligible (never a fake
+    success).
+    """
+    from app.core.processor import Processor
+
+    with get_db_connection() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE episodes
+               SET status = 'pending',
+                   next_retry_at = NULL
+             WHERE status IN ('pending', 'failed', 'rate_limited')
+            """
+        )
+        conn.commit()
+        requeued = cursor.rowcount
+
+    if requeued <= 0:
+        return RedirectResponse(
+            url="/admin/queue?error=Nothing+in+the+queue+to+retry",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    # Kick the processor now instead of waiting for its next poll.
+    proc = Processor()
+    background_tasks.add_task(proc.process_queue)
+
+    label = "episode" if requeued == 1 else "episodes"
+    return RedirectResponse(
+        url=f"/admin/queue?success=Re-queued+{requeued}+{label}",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
 @router.post("/api/episodes/{episode_id}/reprocess", dependencies=[Depends(require_user_action)])
 async def api_reprocess_episode(episode_id: int, skip_transcription: bool = False):
     import json
