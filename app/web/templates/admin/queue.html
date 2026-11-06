@@ -1,6 +1,11 @@
 {% extends "admin/layout.html" %}
 
 {% block admin_content %}
+{% if request.query_params.get('error') %}
+<div class="alert-error mb-6 animate-fade-in" role="alert">
+    <p class="font-medium">{{ request.query_params.get('error') }}</p>
+</div>
+{% endif %}
 <div class="mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
     <h3 class="font-display text-xl font-bold">Processing Queue</h3>
     <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full sm:w-auto">
@@ -31,6 +36,13 @@
             </svg>
             Refresh
         </a>
+
+        <form action="/admin/queue/retry-all" method="post" class="inline">
+            <button type="submit" class="btn-secondary btn-sm"
+                onclick="return confirm('Retry the whole queue? This re-queues every non-processing item now (pending, failed and rate_limited) and clears any backoff wait.');">
+                Retry Queue
+            </button>
+        </form>
     </div>
 </div>
 
