@@ -955,8 +955,12 @@ async def test_ai_connection(
         # We passed api_key as generic.
         
         prov_instance = detector.create_provider(provider, api_key=api_key, model=model)
-        result = prov_instance.test_connection()
-        return {"status": "success", "message": result}
+        # Pass the provider's own result straight through. It already uses the
+        # {"status": "ok", "response": ...} / {"status": "error", "error": ...}
+        # contract the admin UI checks. Wrapping it in "success" here made the
+        # UI's `data.status === 'ok'` test always fail, so a working connection
+        # displayed "ERROR: undefined".
+        return prov_instance.test_connection()
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
