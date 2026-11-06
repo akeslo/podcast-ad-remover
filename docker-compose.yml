@@ -13,3 +13,9 @@ services:
     environment:
       - GEMINI_API_KEY=
       - LOG_LEVEL=INFO
+      # Hermes: oMLX on the Studio (OpenAI-compatible /v1), reached from this
+      # box via the socat forwarder on ks (8001 -> ssh reverse tunnel ->
+      # oMLX on 8000). Pin the vars here so a redeploy cannot drop them;
+      # real values live in .env next to this file, never hardcoded.
+      - HERMES_BASE_URL=${HERMES_BASE_URL:-http://192.168.20.11:8001}
+      - HERMES_API_KEY=${HERMES_API_KEY:-}
