@@ -238,13 +238,13 @@ class TestHermesProvider:
 
     def test_missing_url_raises(self):
         with patch("app.core.ai_services.settings.HERMES_BASE_URL", None):
-            with pytest.raises(ValueError, match="Hermes URL"):
+            with pytest.raises(ValueError, match="oMLX URL"):
                 self._detector({}).create_provider("hermes")
 
     def test_missing_key_raises(self):
         with patch("app.core.ai_services.settings.HERMES_BASE_URL", "http://h:8001"), \
              patch("app.core.ai_services.settings.HERMES_API_KEY", None):
-            with pytest.raises(ValueError, match="Hermes API key"):
+            with pytest.raises(ValueError, match="oMLX API key"):
                 self._detector({}).create_provider("hermes")
 
     def test_long_transcript_is_chunked_like_ollama(self):
