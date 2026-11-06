@@ -39,6 +39,7 @@ SECRET_COLUMNS = (
     "openai_api_key",
     "anthropic_api_key",
     "openrouter_api_key",
+    "hermes_api_key",
     "podcast_index_api_key",
     "podcast_index_api_secret",
 )

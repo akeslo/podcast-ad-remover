@@ -755,6 +755,24 @@ class AdDetector:
             return OpenAIProvider(["ollama"], models_list,
                                   base_url=base_url.rstrip('/') + "/v1", timeout=1800)
 
+        if provider_type == 'hermes':
+            # The local model farm on the Studio, served by oMLX (OpenAI-compatible
+            # /v1). From this box it is reached through the ssh reverse tunnel +
+            # socat forwarder on ks (HERMES_BASE_URL), where the oMLX API key is
+            # served. Same OpenAI client, one hop further.
+            base_url = self.settings.get('hermes_base_url') or settings.HERMES_BASE_URL
+            if not base_url:
+                raise ValueError("No Hermes URL set (Admin > AI or HERMES_BASE_URL)")
+            api_key = explicit_api_key or self.settings.get('hermes_api_key') or \
+                settings.HERMES_API_KEY or ""
+            if not api_key:
+                raise ValueError("No Hermes API key set (Admin > AI or HERMES_API_KEY)")
+            models_list = (self._parse_model_setting(model, []) if model else
+                           self._parse_model_setting(self.settings.get('hermes_model') or '',
+                                                     ['Qwen3.8-Flash-Next-Uncensored-oQ4e-mtp']))
+            return OpenAIProvider([api_key], models_list,
+                                  base_url=base_url.rstrip('/') + "/v1", timeout=1800)
+
         # Resolve keys (DB Overrides Env)
         if not api_key:
             db_key = None
@@ -908,11 +926,12 @@ class AdDetector:
                 "remove_ads": True, "remove_promos": True, "remove_intros": False, "remove_outros": False, "custom_instructions": None
             }
 
-        # Local models have a fixed server context that silently truncates a long
-        # prompt, so Ollama gets the transcript in overlapping windows. Timestamps
-        # are absolute and overlapping cuts are merged downstream.
+        # Local models (Ollama on ks, Hermes/oMLX on the Studio) have a fixed
+        # server context that silently truncates a long prompt, so they get the
+        # transcript in overlapping windows. Timestamps are absolute and overlapping
+        # cuts are merged downstream.
         segments = transcript['segments']
-        if self.settings.get('active_ai_provider') == 'ollama':
+        if self.settings.get('active_ai_provider') in ('ollama', 'hermes'):
             chunks = self._chunk_segments(segments, OLLAMA_CHUNK_CHARS, OLLAMA_CHUNK_OVERLAP_S)
         else:
             chunks = [segments]

@@ -10,6 +10,11 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str | None = Field(None, description="Anthropic API Key")
     OPENROUTER_API_KEY: str | None = Field(None, description="OpenRouter API Key")
     OLLAMA_BASE_URL: str | None = Field(None, description="Ollama server URL, e.g. http://192.168.20.11:11434")
+    # Hermes: the local model farm on the Studio (served by oMLX, OpenAI-compatible
+    # /v1). Reached from ks through an ssh reverse tunnel + socat forwarder, so the
+    # app talks to 192.168.20.11:8001 which lands on oMLX on the Studio.
+    HERMES_BASE_URL: str | None = Field(None, description="Hermes (oMLX on Studio) base URL, e.g. http://192.168.20.11:8001")
+    HERMES_API_KEY: str | None = Field(None, description="oMLX API key for the Hermes endpoint")
     # Podcast Index (api.podcastindex.org) credentials, used for podcast
     # search and the trending/browse discovery surfaces. These seed an
     # install; the operator-editable values in app_settings take precedence

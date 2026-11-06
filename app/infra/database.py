@@ -93,6 +93,9 @@ def init_db():
         openrouter_model TEXT DEFAULT 'google/gemini-2.0-flash-001',
         ollama_base_url TEXT,
         ollama_model TEXT DEFAULT 'gpt-oss:20b',
+        hermes_base_url TEXT,
+        hermes_api_key TEXT,
+        hermes_model TEXT DEFAULT 'Qwen3.8-Flash-Next-Uncensored-oQ4e-mtp',
         app_external_url TEXT,
         
         enable_feed_auth INTEGER DEFAULT 0,
@@ -278,6 +281,10 @@ Transcript Context: {transcript_context}""",))
         "ALTER TABLE app_settings ADD COLUMN openrouter_model TEXT DEFAULT 'google/gemini-2.0-flash-001'",
         "ALTER TABLE app_settings ADD COLUMN ollama_base_url TEXT",
         "ALTER TABLE app_settings ADD COLUMN ollama_model TEXT DEFAULT 'gpt-oss:20b'",
+        # Hermes (oMLX on the Studio) provider
+        "ALTER TABLE app_settings ADD COLUMN hermes_base_url TEXT",
+        "ALTER TABLE app_settings ADD COLUMN hermes_api_key TEXT",
+        "ALTER TABLE app_settings ADD COLUMN hermes_model TEXT DEFAULT 'Qwen3.8-Flash-Next-Uncensored-oQ4e-mtp'",
         "ALTER TABLE episodes ADD COLUMN processing_flags TEXT",
         "ALTER TABLE app_settings ADD COLUMN gemini_api_key TEXT",
         "ALTER TABLE app_settings ADD COLUMN app_external_url TEXT",

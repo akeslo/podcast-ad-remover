@@ -203,3 +203,72 @@ class TestOllamaProvider:
         with patch("app.core.ai_services.settings.OLLAMA_BASE_URL", None):
             with pytest.raises(ValueError, match="Ollama URL"):
                 self._detector({}).create_provider("ollama")
+
+
+class TestHermesProvider:
+    def _detector(self, s):
+        from app.core.ai_services import AdDetector
+        with patch.object(AdDetector, "_load_settings", return_value=s):
+            return AdDetector()
+
+    def test_builds_openai_compatible_client_with_key(self):
+        with patch("openai.OpenAI") as client:
+            prov = self._detector({
+                "hermes_base_url": "http://192.168.20.11:8001/",
+                "hermes_api_key": "omlx-test-key",
+                "hermes_model": '["Qwen3.8-Flash-Next-Uncensored-oQ4e-mtp"]',
+            }).create_provider("hermes")
+        assert prov.models == ["Qwen3.8-Flash-Next-Uncensored-oQ4e-mtp"]
+        assert client.call_args.kwargs["base_url"] == "http://192.168.20.11:8001/v1"
+        assert client.call_args.kwargs["timeout"] == 1800
+
+    def test_explicit_key_beats_saved(self):
+        with patch("openai.OpenAI") as client:
+            self._detector({"hermes_base_url": "http://h:8001", "hermes_api_key": "saved"}).create_provider(
+                "hermes", api_key="typed")
+        assert client.call_args.kwargs["api_key"] == "typed"
+
+    def test_env_fallback(self):
+        with patch("openai.OpenAI") as client:
+            with patch("app.core.ai_services.settings.HERMES_BASE_URL", "http://192.168.20.11:8001"), \
+                 patch("app.core.ai_services.settings.HERMES_API_KEY", "env-key"):
+                self._detector({}).create_provider("hermes")
+        assert client.call_args.kwargs["base_url"] == "http://192.168.20.11:8001/v1"
+        assert client.call_args.kwargs["api_key"] == "env-key"
+
+    def test_missing_url_raises(self):
+        with patch("app.core.ai_services.settings.HERMES_BASE_URL", None):
+            with pytest.raises(ValueError, match="Hermes URL"):
+                self._detector({}).create_provider("hermes")
+
+    def test_missing_key_raises(self):
+        with patch("app.core.ai_services.settings.HERMES_BASE_URL", "http://h:8001"), \
+             patch("app.core.ai_services.settings.HERMES_API_KEY", None):
+            with pytest.raises(ValueError, match="Hermes API key"):
+                self._detector({}).create_provider("hermes")
+
+    def test_long_transcript_is_chunked_like_ollama(self):
+        # detect_ads must window long transcripts for hermes too: it is a local
+        # server with a fixed context, same silent-truncation hazard as Ollama.
+        # 100 segments at 60 s apart (~72k chars) force several windows.
+        from app.core.ai_services import AdDetector, OLLAMA_CHUNK_CHARS
+        prompts = []
+
+        class P:
+            def generate(self, prompt):
+                prompts.append(prompt)
+                return '[]'
+
+        # keep the _load_settings patch live across detect_ads: it reloads
+        # settings at the start of every call
+        with patch.object(AdDetector, "_load_settings",
+                         return_value={"active_ai_provider": "hermes"}):
+            det = AdDetector()
+            with patch.object(det, "_get_provider", return_value=P()):
+                out = det.detect_ads({"segments": [
+                    {"start": float(i * 60), "end": float(i * 60) + 59,
+                     "text": "x" * 700} for i in range(100)]})
+        assert out == []
+        # windowing happened, and every window stayed under the cap
+        assert 2 <= len(prompts) <= 4
+        assert all(len(p) < OLLAMA_CHUNK_CHARS + 8000 for p in prompts)
