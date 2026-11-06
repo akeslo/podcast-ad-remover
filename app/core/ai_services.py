@@ -762,11 +762,11 @@ class AdDetector:
             # served. Same OpenAI client, one hop further.
             base_url = self.settings.get('hermes_base_url') or settings.HERMES_BASE_URL
             if not base_url:
-                raise ValueError("No Hermes URL set (Admin > AI or HERMES_BASE_URL)")
+                raise ValueError("No Studio oMLX URL set (Admin > AI or HERMES_BASE_URL)")
             api_key = explicit_api_key or self.settings.get('hermes_api_key') or \
                 settings.HERMES_API_KEY or ""
             if not api_key:
-                raise ValueError("No Hermes API key set (Admin > AI or HERMES_API_KEY)")
+                raise ValueError("No Studio oMLX API key set (Admin > AI or HERMES_API_KEY)")
             models_list = (self._parse_model_setting(model, []) if model else
                            self._parse_model_setting(self.settings.get('hermes_model') or '',
                                                      ['Qwen3.8-Flash-Next-Uncensored-oQ4e-mtp']))
