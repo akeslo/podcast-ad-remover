@@ -1125,9 +1125,11 @@ async def retry_all_queue(request: Request, background_tasks: BackgroundTasks):
     """Re-queue every live-queue item that is not already processing.
 
     One bulk UPDATE covers the whole queue in a single DB operation: every
-    episode whose status is pending, failed or rate_limited goes back to
-    'pending' with next_retry_at cleared, so nothing sits waiting out a backoff
-    window. 'processing' rows are left alone (their work is already in flight,
+    episode the queue page lists (pending, rate_limited, or failed with a
+    retry still scheduled) goes back to 'pending' with next_retry_at cleared,
+    so nothing sits waiting out a backoff window. A terminal failure
+    (next_retry_at NULL) is not in the queue and stays failed, matching
+    get_queue(). 'processing' rows are left alone (their work is already in flight,
     and the claim in process_queue is made with condition_status elsewhere);
     'ignored' (cancelled) rows stay cancelled, because this retries the live
     queue and does not resurrect something deliberately dismissed.
@@ -1146,7 +1148,8 @@ async def retry_all_queue(request: Request, background_tasks: BackgroundTasks):
             UPDATE episodes
                SET status = 'pending',
                    next_retry_at = NULL
-             WHERE status IN ('pending', 'failed', 'rate_limited')
+             WHERE status IN ('pending', 'rate_limited')
+                OR (status = 'failed' AND next_retry_at IS NOT NULL)
             """
         )
         conn.commit()
