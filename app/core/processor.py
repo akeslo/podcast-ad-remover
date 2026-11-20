@@ -378,11 +378,12 @@ class Processor:
                     continue
 
                 # Atomically claim the episode: the UPDATE only succeeds if
-                # the row is still 'pending' at the moment it runs, so two
+                # the row still has the status get_pending() read (pending, or
+                # failed/rate_limited with a due retry) when it runs, so two
                 # racing claimants (this loop, another process, a retry path)
                 # can never both win the same episode. If the claim fails,
                 # someone else already took it — skip without launching.
-                claimed = self.ep_repo.update_status(ep_id, "processing", condition_status="pending")
+                claimed = self.ep_repo.update_status(ep_id, "processing", condition_status=ep_dict["status"])
                 if not claimed:
                     continue
                 self.ep_repo.update_progress(ep_id, "Starting...", 0)
