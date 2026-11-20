@@ -179,6 +179,29 @@ def test_retry_all_leaves_processing_completed_ignored_untouched(
     assert after["retry-all-ignored"] == before["retry-all-ignored"]
 
 
+def test_retry_all_leaves_terminal_failure_untouched(client, seeded_queue):
+    """A failed row with no retry scheduled is not in the queue; it stays failed."""
+    with get_db_connection() as conn:
+        conn.execute(
+            "INSERT INTO episodes (subscription_id, guid, title, original_url,"
+            " status, next_retry_at) VALUES (?, ?, ?, ?, 'failed', NULL)",
+            (
+                seeded_queue,
+                "retry-all-failed-terminal",
+                "ep retry-all-failed-terminal",
+                "http://example.invalid/retry-all-failed-terminal.mp3",
+            ),
+        )
+        conn.commit()
+
+    response = client.post(RETRY_ALL_URL, headers=SAME_ORIGIN, follow_redirects=False)
+    assert response.status_code == 303, response.text
+
+    after = _fetch_rows(seeded_queue)
+    assert after["retry-all-failed-terminal"] == ("failed", None)
+    assert after["retry-all-failed"] == ("pending", None)
+
+
 # --------------------------------------------------------------------------
 # (c) the route requires admin: refusals ...
 # --------------------------------------------------------------------------
