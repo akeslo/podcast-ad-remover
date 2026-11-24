@@ -1,6 +1,6 @@
 import os
 from pydantic_settings import BaseSettings
-from pydantic import Field
+from pydantic import Field, model_validator
 
 class Settings(BaseSettings):
     # Core
@@ -10,11 +10,11 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str | None = Field(None, description="Anthropic API Key")
     OPENROUTER_API_KEY: str | None = Field(None, description="OpenRouter API Key")
     OLLAMA_BASE_URL: str | None = Field(None, description="Ollama server URL, e.g. http://192.168.20.11:11434")
-    # Hermes: the local model farm on the Studio (served by oMLX, OpenAI-compatible
+    # oMLX: the local model farm on the Studio (served by oMLX, OpenAI-compatible
     # /v1). Reached from ks through an ssh reverse tunnel + socat forwarder, so the
     # app talks to 192.168.20.11:8001 which lands on oMLX on the Studio.
-    HERMES_BASE_URL: str | None = Field(None, description="Hermes (oMLX on Studio) base URL, e.g. http://192.168.20.11:8001")
-    HERMES_API_KEY: str | None = Field(None, description="oMLX API key for the Hermes endpoint")
+    OMLX_BASE_URL: str | None = Field(None, description="oMLX on the Studio base URL, e.g. http://192.168.20.11:8001")
+    OMLX_API_KEY: str | None = Field(None, description="oMLX API key for the oMLX endpoint")
     # Podcast Index (api.podcastindex.org) credentials, used for podcast
     # search and the trending/browse discovery surfaces. These seed an
     # install; the operator-editable values in app_settings take precedence
@@ -128,6 +128,16 @@ class Settings(BaseSettings):
     def get_episode_dir(self, podcast_slug: str, episode_slug: str) -> str:
         """Get the directory path for a specific episode"""
         return os.path.join(self.PODCASTS_DIR, podcast_slug, episode_slug)
+
+    @model_validator(mode="after")
+    def _legacy_omlx_env(self):
+        """Fallback for one release: the oMLX settings used to be named after the old
+        assistant (HERMES_BASE_URL, HERMES_API_KEY). A stale .env keeps working."""
+        if not self.OMLX_BASE_URL:
+            self.OMLX_BASE_URL = os.environ.get("HERMES_BASE_URL") or None
+        if not self.OMLX_API_KEY:
+            self.OMLX_API_KEY = os.environ.get("HERMES_API_KEY") or None
+        return self
 
     class Config:
         env_file = ".env"

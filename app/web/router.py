@@ -824,8 +824,8 @@ async def admin_ai(request: Request):
         "ANTHROPIC_API_KEY": bool(settings.ANTHROPIC_API_KEY),
         "OPENROUTER_API_KEY": bool(settings.OPENROUTER_API_KEY),
         "OLLAMA_BASE_URL": bool(settings.OLLAMA_BASE_URL),
-        "HERMES_BASE_URL": bool(settings.HERMES_BASE_URL),
-        "HERMES_API_KEY": bool(settings.HERMES_API_KEY)
+        "OMLX_BASE_URL": bool(settings.OMLX_BASE_URL),
+        "OMLX_API_KEY": bool(settings.OMLX_API_KEY)
     }
 
     user = get_current_user(request)
@@ -859,9 +859,9 @@ async def update_ai_settings(
     openrouter_model: str = Form("google/gemini-2.0-flash-001"),
     ollama_base_url: str = Form(None),
     ollama_model: str = Form('["gpt-oss:20b"]'),
-    hermes_base_url: str = Form(None),
-    hermes_api_key: str = Form(None),
-    hermes_model: str = Form('["Qwen3.8-Flash-Next-Uncensored-oQ4e-mtp"]')
+    omlx_base_url: str = Form(None),
+    omlx_api_key: str = Form(None),
+    omlx_model: str = Form('["Qwen3.8-Flash-Next-Uncensored-oQ4e-mtp"]')
 ):
     from app.infra.database import get_db_connection
     import json
@@ -891,14 +891,14 @@ async def update_ai_settings(
     with get_db_connection() as conn:
         stored = decrypt_settings(conn.execute(
             "SELECT openai_api_key, anthropic_api_key, openrouter_api_key, "
-            "hermes_api_key, gemini_api_keys FROM app_settings WHERE id = 1"
+            "omlx_api_key, gemini_api_keys FROM app_settings WHERE id = 1"
         ).fetchone())
         # Saved keys are rendered as a sentinel; map it back to the stored
         # value, then encrypt everything before it touches the database.
         openai_api_key = encrypt_secret(resolve_submitted(openai_api_key, stored.get("openai_api_key")))
         anthropic_api_key = encrypt_secret(resolve_submitted(anthropic_api_key, stored.get("anthropic_api_key")))
         openrouter_api_key = encrypt_secret(resolve_submitted(openrouter_api_key, stored.get("openrouter_api_key")))
-        hermes_api_key = encrypt_secret(resolve_submitted(hermes_api_key, stored.get("hermes_api_key")))
+        omlx_api_key = encrypt_secret(resolve_submitted(omlx_api_key, stored.get("omlx_api_key")))
         gemini_api_keys = encrypt_secret_list_json(json.dumps(
             resolve_submitted_list(parsed_keys, stored.get("gemini_api_keys"))
         ))
@@ -917,9 +917,9 @@ async def update_ai_settings(
                 openrouter_model = ?,
                 ollama_base_url = ?,
                 ollama_model = ?,
-                hermes_base_url = ?,
-                hermes_api_key = ?,
-                hermes_model = ?,
+                omlx_base_url = ?,
+                omlx_api_key = ?,
+                omlx_model = ?,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = 1
         """, (
@@ -927,7 +927,7 @@ async def update_ai_settings(
             openai_api_key, anthropic_api_key, openrouter_api_key, gemini_api_keys,
             openai_model, anthropic_model, openrouter_model,
             (ollama_base_url or "").strip() or None, ollama_model,
-            (hermes_base_url or "").strip() or None, hermes_api_key, hermes_model
+            (omlx_base_url or "").strip() or None, omlx_api_key, omlx_model
         ))
         conn.commit()
     return RedirectResponse(url="/admin/ai", status_code=303)

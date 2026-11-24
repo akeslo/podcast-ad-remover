@@ -205,7 +205,7 @@ class TestOllamaProvider:
                 self._detector({}).create_provider("ollama")
 
 
-class TestHermesProvider:
+class TestOmlxProvider:
     def _detector(self, s):
         from app.core.ai_services import AdDetector
         with patch.object(AdDetector, "_load_settings", return_value=s):
@@ -214,41 +214,87 @@ class TestHermesProvider:
     def test_builds_openai_compatible_client_with_key(self):
         with patch("openai.OpenAI") as client:
             prov = self._detector({
-                "hermes_base_url": "http://192.168.20.11:8001/",
-                "hermes_api_key": "omlx-test-key",
-                "hermes_model": '["Qwen3.8-Flash-Next-Uncensored-oQ4e-mtp"]',
-            }).create_provider("hermes")
+                "omlx_base_url": "http://192.168.20.11:8001/",
+                "omlx_api_key": "omlx-test-key",
+                "omlx_model": '["Qwen3.8-Flash-Next-Uncensored-oQ4e-mtp"]',
+            }).create_provider("omlx")
         assert prov.models == ["Qwen3.8-Flash-Next-Uncensored-oQ4e-mtp"]
         assert client.call_args.kwargs["base_url"] == "http://192.168.20.11:8001/v1"
         assert client.call_args.kwargs["timeout"] == 1800
 
     def test_explicit_key_beats_saved(self):
         with patch("openai.OpenAI") as client:
-            self._detector({"hermes_base_url": "http://h:8001", "hermes_api_key": "saved"}).create_provider(
-                "hermes", api_key="typed")
+            self._detector({"omlx_base_url": "http://h:8001", "omlx_api_key": "saved"}).create_provider(
+                "omlx", api_key="typed")
         assert client.call_args.kwargs["api_key"] == "typed"
 
     def test_env_fallback(self):
         with patch("openai.OpenAI") as client:
-            with patch("app.core.ai_services.settings.HERMES_BASE_URL", "http://192.168.20.11:8001"), \
-                 patch("app.core.ai_services.settings.HERMES_API_KEY", "env-key"):
-                self._detector({}).create_provider("hermes")
+            with patch("app.core.ai_services.settings.OMLX_BASE_URL", "http://192.168.20.11:8001"), \
+                 patch("app.core.ai_services.settings.OMLX_API_KEY", "env-key"):
+                self._detector({}).create_provider("omlx")
         assert client.call_args.kwargs["base_url"] == "http://192.168.20.11:8001/v1"
         assert client.call_args.kwargs["api_key"] == "env-key"
 
     def test_missing_url_raises(self):
-        with patch("app.core.ai_services.settings.HERMES_BASE_URL", None):
+        with patch("app.core.ai_services.settings.OMLX_BASE_URL", None):
             with pytest.raises(ValueError, match="oMLX URL"):
-                self._detector({}).create_provider("hermes")
+                self._detector({}).create_provider("omlx")
 
     def test_missing_key_raises(self):
-        with patch("app.core.ai_services.settings.HERMES_BASE_URL", "http://h:8001"), \
-             patch("app.core.ai_services.settings.HERMES_API_KEY", None):
+        with patch("app.core.ai_services.settings.OMLX_BASE_URL", "http://h:8001"), \
+             patch("app.core.ai_services.settings.OMLX_API_KEY", None):
             with pytest.raises(ValueError, match="oMLX API key"):
-                self._detector({}).create_provider("hermes")
+                self._detector({}).create_provider("omlx")
+
+    def test_legacy_provider_name_still_builds_omlx(self):
+        # a saved active_ai_provider from before the rename must not break
+        with patch("openai.OpenAI") as client:
+            self._detector({"omlx_base_url": "http://h:8001", "omlx_api_key": "k"}).create_provider("hermes")
+        assert client.call_args.kwargs["base_url"] == "http://h:8001/v1"
+
+    def test_legacy_env_names_are_read_for_one_release(self, monkeypatch):
+        from app.core.config import Settings
+        monkeypatch.delenv("OMLX_BASE_URL", raising=False)
+        monkeypatch.delenv("OMLX_API_KEY", raising=False)
+        monkeypatch.setenv("HERMES_BASE_URL", "http://old:8001")
+        monkeypatch.setenv("HERMES_API_KEY", "old-key")
+        s = Settings(_env_file=None)
+        assert s.OMLX_BASE_URL == "http://old:8001"
+        assert s.OMLX_API_KEY == "old-key"
+
+    def test_new_env_names_win_over_legacy(self, monkeypatch):
+        from app.core.config import Settings
+        monkeypatch.setenv("OMLX_BASE_URL", "http://new:8001")
+        monkeypatch.setenv("HERMES_BASE_URL", "http://old:8001")
+        assert Settings(_env_file=None).OMLX_BASE_URL == "http://new:8001"
+
+    def test_columns_and_provider_are_renamed_in_place(self, tmp_path, monkeypatch):
+        import os, sqlite3
+        from app.core.config import settings as app_settings
+        from app.infra.database import init_db
+        for sub in ("db", "feeds", "audio"):
+            os.makedirs(os.path.join(tmp_path, sub), exist_ok=True)
+        monkeypatch.setattr(app_settings, "DATA_DIR", str(tmp_path))
+        init_db()
+        conn = sqlite3.connect(app_settings.DB_PATH)
+        for new, old in (("omlx_base_url", "hermes_base_url"), ("omlx_api_key", "hermes_api_key"),
+                         ("omlx_model", "hermes_model")):
+            conn.execute(f"ALTER TABLE app_settings RENAME COLUMN {new} TO {old}")
+        conn.execute("UPDATE app_settings SET hermes_base_url = 'http://saved:8001', "
+                     "active_ai_provider = 'hermes' WHERE id = 1")
+        conn.commit(); conn.close()
+        init_db()
+        conn = sqlite3.connect(app_settings.DB_PATH)
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(app_settings)")}
+        row = conn.execute("SELECT omlx_base_url, active_ai_provider FROM app_settings WHERE id = 1").fetchone()
+        conn.close()
+        assert {"omlx_base_url", "omlx_api_key", "omlx_model"} <= cols
+        assert not {c for c in cols if c.startswith("hermes_")}
+        assert row == ("http://saved:8001", "omlx")
 
     def test_long_transcript_is_chunked_like_ollama(self):
-        # detect_ads must window long transcripts for hermes too: it is a local
+        # detect_ads must window long transcripts for omlx too: it is a local
         # server with a fixed context, same silent-truncation hazard as Ollama.
         # 100 segments at 60 s apart (~72k chars) force several windows.
         from app.core.ai_services import AdDetector, OLLAMA_CHUNK_CHARS
@@ -262,7 +308,7 @@ class TestHermesProvider:
         # keep the _load_settings patch live across detect_ads: it reloads
         # settings at the start of every call
         with patch.object(AdDetector, "_load_settings",
-                         return_value={"active_ai_provider": "hermes"}):
+                         return_value={"active_ai_provider": "omlx"}):
             det = AdDetector()
             with patch.object(det, "_get_provider", return_value=P()):
                 out = det.detect_ads({"segments": [

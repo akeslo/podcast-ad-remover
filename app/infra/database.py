@@ -93,9 +93,9 @@ def init_db():
         openrouter_model TEXT DEFAULT 'google/gemini-2.0-flash-001',
         ollama_base_url TEXT,
         ollama_model TEXT DEFAULT 'gpt-oss:20b',
-        hermes_base_url TEXT,
-        hermes_api_key TEXT,
-        hermes_model TEXT DEFAULT 'Qwen3.8-Flash-Next-Uncensored-oQ4e-mtp',
+        omlx_base_url TEXT,
+        omlx_api_key TEXT,
+        omlx_model TEXT DEFAULT 'Qwen3.8-Flash-Next-Uncensored-oQ4e-mtp',
         app_external_url TEXT,
         
         enable_feed_auth INTEGER DEFAULT 0,
@@ -281,10 +281,10 @@ Transcript Context: {transcript_context}""",))
         "ALTER TABLE app_settings ADD COLUMN openrouter_model TEXT DEFAULT 'google/gemini-2.0-flash-001'",
         "ALTER TABLE app_settings ADD COLUMN ollama_base_url TEXT",
         "ALTER TABLE app_settings ADD COLUMN ollama_model TEXT DEFAULT 'gpt-oss:20b'",
-        # Hermes (oMLX on the Studio) provider
-        "ALTER TABLE app_settings ADD COLUMN hermes_base_url TEXT",
-        "ALTER TABLE app_settings ADD COLUMN hermes_api_key TEXT",
-        "ALTER TABLE app_settings ADD COLUMN hermes_model TEXT DEFAULT 'Qwen3.8-Flash-Next-Uncensored-oQ4e-mtp'",
+        # oMLX (on the Studio) provider
+        "ALTER TABLE app_settings ADD COLUMN omlx_base_url TEXT",
+        "ALTER TABLE app_settings ADD COLUMN omlx_api_key TEXT",
+        "ALTER TABLE app_settings ADD COLUMN omlx_model TEXT DEFAULT 'Qwen3.8-Flash-Next-Uncensored-oQ4e-mtp'",
         "ALTER TABLE episodes ADD COLUMN processing_flags TEXT",
         "ALTER TABLE app_settings ADD COLUMN gemini_api_key TEXT",
         "ALTER TABLE app_settings ADD COLUMN app_external_url TEXT",
@@ -337,11 +337,27 @@ Transcript Context: {transcript_context}""",))
         "ALTER TABLE episodes ADD COLUMN thumbnail_url TEXT"
     ]
 
+    # The oMLX provider settings used to live in columns named after the old assistant.
+    # Rename them in place (keeps the saved URL, key and model) before the ADD COLUMN
+    # list below runs, so a fresh column is never added next to the old one.
+    existing_cols = {row[1] for row in cursor.execute("PRAGMA table_info(app_settings)")}
+    for old, new in (("hermes_base_url", "omlx_base_url"),
+                     ("hermes_api_key", "omlx_api_key"),
+                     ("hermes_model", "omlx_model")):
+        if old in existing_cols and new not in existing_cols:
+            try:
+                cursor.execute(f"ALTER TABLE app_settings RENAME COLUMN {old} TO {new}")
+            except sqlite3.OperationalError:
+                pass  # SQLite older than 3.25; the new column is added empty below
+
     for sql in migrations:
         try:
             cursor.execute(sql)
         except sqlite3.OperationalError:
             pass # Column likely exists
+
+    # The provider id changed with the columns.
+    cursor.execute("UPDATE app_settings SET active_ai_provider = 'omlx' WHERE active_ai_provider = 'hermes'")
 
     # Purge the plaintext admin password left behind by older installs.
     #
