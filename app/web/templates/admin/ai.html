@@ -88,7 +88,7 @@
                     OpenRouter</option>
                 <option value="ollama" {% if settings.active_ai_provider=='ollama' %}selected{% endif %}>
                     Ollama (local)</option>
-                <option value="hermes" {% if settings.active_ai_provider=='hermes' %}selected{% endif %}>
+                <option value="omlx" {% if settings.active_ai_provider=='omlx' %}selected{% endif %}>
                     Studio oMLX (local)</option>
             </select>
 
@@ -179,29 +179,29 @@
                 {{ shuttle_ui('ollama', 'Ollama Model Cascade', 'ollama_model', settings.ollama_model | tojson) }}
             </div>
 
-            <!-- Studio oMLX shuttle (provider id: hermes) -->
-            <div id="hermesSettings" class="provider-section hidden space-y-4">
+            <!-- Studio oMLX shuttle (provider id: omlx) -->
+            <div id="omlxSettings" class="provider-section hidden space-y-4">
                 <div>
                     <label class="block text-sm font-medium text-text-secondary mb-2">oMLX URL (on the Studio)</label>
-                    <input type="text" name="hermes_base_url" id="hermes_url"
-                        value="{{ settings.hermes_base_url or '' }}"
-                        placeholder="{% if env_keys.HERMES_BASE_URL %}Using Environment Variable{% else %}http://192.168.20.11:8001{% endif %}"
+                    <input type="text" name="omlx_base_url" id="omlx_url"
+                        value="{{ settings.omlx_base_url or '' }}"
+                        placeholder="{% if env_keys.OMLX_BASE_URL %}Using Environment Variable{% else %}http://192.168.20.11:8001{% endif %}"
                         class="input">
-                    {% if env_keys.HERMES_BASE_URL %}
+                    {% if env_keys.OMLX_BASE_URL %}
                     <p class="text-xs text-emerald-400">✓ Environment Variable Detected</p>
                     {% endif %}
                     <label class="block text-sm font-medium text-text-secondary mb-2 mt-3">oMLX API Key</label>
-                    <input type="password" name="hermes_api_key" id="hermes_key"
-                        value="{{ settings.hermes_api_key or '' }}"
-                        placeholder="{% if env_keys.HERMES_API_KEY %}Using Environment Variable{% else %}Enter oMLX API Key{% endif %}"
+                    <input type="password" name="omlx_api_key" id="omlx_key"
+                        value="{{ settings.omlx_api_key or '' }}"
+                        placeholder="{% if env_keys.OMLX_API_KEY %}Using Environment Variable{% else %}Enter oMLX API Key{% endif %}"
                         class="input">
-                    {% if env_keys.HERMES_API_KEY %}
+                    {% if env_keys.OMLX_API_KEY %}
                     <p class="text-xs text-emerald-400">✓ Environment Variable Detected</p>
                     {% endif %}
                     <p class="text-xs text-text-muted mt-1">Served by oMLX on the Studio; reached through the
                         ssh tunnel + forwarder on this box (port 8001).</p>
                 </div>
-                {{ shuttle_ui('hermes', 'Studio oMLX Model Cascade', 'hermes_model', settings.hermes_model | tojson) }}
+                {{ shuttle_ui('omlx', 'Studio oMLX Model Cascade', 'omlx_model', settings.omlx_model | tojson) }}
             </div>
 
             <!-- Test Connection Area -->
@@ -232,7 +232,7 @@
         'anthropic': ['claude-3-5-sonnet-20241022', 'claude-3-opus-20240229', 'claude-3-haiku-20240307'],
         'openrouter': ['google/gemini-2.0-flash-001', 'meta-llama/llama-3-70b-instruct', 'anthropic/claude-3-opus'],
         'ollama': ['gpt-oss:20b'],
-        'hermes': ['Qwen3.8-Flash-Next-Uncensored-oQ4e-mtp', 'Qwen3.5-122B-A10B-6bit']
+        'omlx': ['Qwen3.8-Flash-Next-Uncensored-oQ4e-mtp', 'Qwen3.5-122B-A10B-6bit']
     };
 
     class ShuttleManager {
@@ -369,7 +369,7 @@
     shuttleManager.init('anthropic', {{ settings.anthropic_model | tojson }});
     shuttleManager.init('openrouter', {{ settings.openrouter_model | tojson }});
     shuttleManager.init('ollama', {{ settings.ollama_model | tojson }});
-    shuttleManager.init('hermes', {{ settings.hermes_model | tojson }});
+    shuttleManager.init('omlx', {{ settings.omlx_model | tojson }});
 
     // Gemini Multi-Key Manager
     class GeminiKeyManager {

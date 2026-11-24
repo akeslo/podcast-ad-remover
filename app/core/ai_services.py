@@ -743,6 +743,10 @@ class AdDetector:
         # silently tests the previously saved key instead.
         explicit_api_key = api_key if api_key else None
 
+        # The provider used to be called 'hermes'; a stale saved value still maps here.
+        if provider_type == 'hermes':
+            provider_type = 'omlx'
+
         if provider_type == 'ollama':
             # Local server, no key. Uses Ollama's OpenAI-compatible /v1 endpoint;
             # context length is the server's OLLAMA_CONTEXT_LENGTH.
@@ -755,20 +759,20 @@ class AdDetector:
             return OpenAIProvider(["ollama"], models_list,
                                   base_url=base_url.rstrip('/') + "/v1", timeout=1800)
 
-        if provider_type == 'hermes':
+        if provider_type == 'omlx':
             # The local model farm on the Studio, served by oMLX (OpenAI-compatible
             # /v1). From this box it is reached through the ssh reverse tunnel +
-            # socat forwarder on ks (HERMES_BASE_URL), where the oMLX API key is
+            # socat forwarder on ks (OMLX_BASE_URL), where the oMLX API key is
             # served. Same OpenAI client, one hop further.
-            base_url = self.settings.get('hermes_base_url') or settings.HERMES_BASE_URL
+            base_url = self.settings.get('omlx_base_url') or settings.OMLX_BASE_URL
             if not base_url:
-                raise ValueError("No Studio oMLX URL set (Admin > AI or HERMES_BASE_URL)")
-            api_key = explicit_api_key or self.settings.get('hermes_api_key') or \
-                settings.HERMES_API_KEY or ""
+                raise ValueError("No Studio oMLX URL set (Admin > AI or OMLX_BASE_URL)")
+            api_key = explicit_api_key or self.settings.get('omlx_api_key') or \
+                settings.OMLX_API_KEY or ""
             if not api_key:
-                raise ValueError("No Studio oMLX API key set (Admin > AI or HERMES_API_KEY)")
+                raise ValueError("No Studio oMLX API key set (Admin > AI or OMLX_API_KEY)")
             models_list = (self._parse_model_setting(model, []) if model else
-                           self._parse_model_setting(self.settings.get('hermes_model') or '',
+                           self._parse_model_setting(self.settings.get('omlx_model') or '',
                                                      ['Qwen3.8-Flash-Next-Uncensored-oQ4e-mtp']))
             return OpenAIProvider([api_key], models_list,
                                   base_url=base_url.rstrip('/') + "/v1", timeout=1800)
@@ -926,12 +930,12 @@ class AdDetector:
                 "remove_ads": True, "remove_promos": True, "remove_intros": False, "remove_outros": False, "custom_instructions": None
             }
 
-        # Local models (Ollama on ks, Hermes/oMLX on the Studio) have a fixed
+        # Local models (Ollama on ks, oMLX on the Studio) have a fixed
         # server context that silently truncates a long prompt, so they get the
         # transcript in overlapping windows. Timestamps are absolute and overlapping
         # cuts are merged downstream.
         segments = transcript['segments']
-        if self.settings.get('active_ai_provider') in ('ollama', 'hermes'):
+        if self.settings.get('active_ai_provider') in ('ollama', 'omlx'):
             chunks = self._chunk_segments(segments, OLLAMA_CHUNK_CHARS, OLLAMA_CHUNK_OVERLAP_S)
         else:
             chunks = [segments]
