@@ -14,7 +14,7 @@ from app.core.ai_services import Transcriber, AdDetector, RateLimitError
 from app.core.audio import AudioProcessor
 from app.core.rss_gen import RSSGenerator
 from app.core.feed import FeedManager
-from app.core.youtube_feed import YouTubeFeedManager
+from app.core.youtube_feed import YouTubeFeedManager, MEMBERS_ONLY_REASON, is_members_only_error
 from app.core.video import VideoProcessor
 from app.core.sponsorblock import SponsorBlockClient
 import yt_dlp
@@ -1022,9 +1022,9 @@ class Processor:
                 return
 
             # Members-only YouTube videos can never be downloaded; don't retry
-            if 'members-only content' in error_str or "available to this channel's members" in error_str:
+            if is_members_only_error(e):
                 logger.info(f"Ignoring members-only video: {ep.title}")
-                self.ep_repo.update_status(ep.id, "ignored", error=str(e))
+                self.ep_repo.update_status(ep.id, "ignored", error=MEMBERS_ONLY_REASON)
                 return
 
             # Regular Retry Logic

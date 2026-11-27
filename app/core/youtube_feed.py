@@ -13,6 +13,26 @@ def slugify(text: str) -> str:
     text = re.sub(r'[-\s]+', '-', text).strip('-')
     return text
 
+MEMBERS_ONLY_REASON = "Members-only video"
+_MEMBERS_ONLY_AVAILABILITY = ('subscriber_only', 'premium_only')
+_MEMBERS_ONLY_MARKERS = (
+    "members-only content",
+    "available to this channel",
+    "join this channel",
+)
+
+
+def is_members_only_error(error) -> bool:
+    """True when a yt-dlp error says the video is members-only (never retryable)."""
+    text = str(error).lower().replace("\u2019", "'")
+    return any(m in text for m in _MEMBERS_ONLY_MARKERS)
+
+
+def is_members_only_entry(entry: dict) -> bool:
+    """True when yt-dlp metadata already marks a video members-only."""
+    return (entry.get('availability') or '') in _MEMBERS_ONLY_AVAILABILITY
+
+
 class YouTubeFeedManager:
     @staticmethod
     def parse_channel(channel_url: str) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
@@ -81,6 +101,10 @@ class YouTubeFeedManager:
                     # Valid video IDs are 11 characters and don't start with UC
                     if not video_id or len(video_id) != 11 or video_id.startswith('UC'):
                         logger.warning(f"Skipping invalid video ID: {video_id} (likely a playlist or channel ID)")
+                        continue
+
+                    if is_members_only_entry(entry):
+                        logger.info(f"Skipping members-only video: {entry.get('title')}")
                         continue
 
                     # Parse upload date. `extract_flat` mode (used above) never

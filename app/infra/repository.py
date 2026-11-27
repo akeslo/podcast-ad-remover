@@ -312,6 +312,12 @@ class EpisodeRepository:
 
             updates.append("next_retry_at = NULL")
 
+            # A terminal non-completed state is never an active download, so a
+            # stale step/progress must not outlive it.
+            if status in ('ignored', 'failed'):
+                updates.append("processing_step = NULL")
+                updates.append("progress = 0")
+
             params.append(id)
             where = "id = ?"
             if condition_status is not None:
