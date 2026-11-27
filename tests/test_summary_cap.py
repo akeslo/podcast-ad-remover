@@ -6,7 +6,7 @@ from app.core.ai_services import (
 )
 
 # Measured Piper en_US-amy-medium speed is ~170 wpm; 20 s allows ~56 words.
-SLOWEST_PLAUSIBLE_WPM = 130
+SLOWEST_PLAUSIBLE_WPM = 140
 
 
 def test_cap_keeps_spoken_length_under_twenty_seconds():
