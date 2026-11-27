@@ -990,7 +990,7 @@ Return a JSON array of objects with "start", "end", "label" (Ad/Promo/Intro/Outr
 Example: [{"start": 0.0, "end": 10.0, "label": "Ad", "reason": "Sponsor read for XYZ"}]""",
         "sponsor": "Sponsor messages, ad reads, promotional segments",
         "promo": "Cross-promotions, plugs for other shows or content",
-        "summary": "Summarize the key points of this podcast episode in 3-5 bullet points."
+        "summary": "Write a 15-second summary (at most 40 words) naming the one or two main topics of this podcast episode."
     }
     
     user = get_current_user(request)

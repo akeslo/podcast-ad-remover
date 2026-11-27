@@ -14,6 +14,35 @@ logger = logging.getLogger(__name__)
 # Minimum silence between consecutive transcript segments before the ad
 # prompt renders an explicit "no transcribed speech" marker line.
 GAP_MARKER_SECONDS = 8.0
+
+# The AI summary is spoken ahead of the episode and must stay at 15-20 s.
+# Measured with the app's Piper voice (en_US-amy-medium): 170-174 words/min,
+# i.e. 40 words = 14 s and 50 words = 17 s. 45 words is about 16 s, which keeps
+# 20 s out of reach even for a voice that speaks 30% slower.
+MAX_SUMMARY_WORDS = 45
+SUMMARY_LENGTH_RULE = (
+    "\n\nLENGTH LIMIT (strict): the whole summary is read aloud and must take "
+    "15 seconds. Use at most 40 words in total, in one or two short sentences. "
+    "Plain text only: no bullets, lists, headings or markdown. Anything over "
+    "45 words is cut off."
+)
+
+
+def limit_summary_words(text: str, max_words: int = MAX_SUMMARY_WORDS) -> str:
+    """Hard cap for the spoken summary, whatever the model returned.
+
+    Keeps at most max_words words, ending at the last full sentence inside the
+    limit when that keeps a reasonable amount of text, else at the limit."""
+    words = (text or "").split()
+    if len(words) <= max_words:
+        return " ".join(words)
+    head = " ".join(words[:max_words])
+    cut = max(head.rfind(". "), head.rfind("! "), head.rfind("? "))
+    if head[-1] in ".!?":
+        cut = len(head) - 1
+    if cut >= 0 and len(head[:cut + 1].split()) >= max_words // 3:
+        return head[:cut + 1]
+    return head.rstrip(",;:- ") + "."
 # Ollama window: ~15k tokens of transcript, leaving room in a 32k server context
 # for the prompt and gpt-oss reasoning output. Overlap covers a boundary ad.
 OLLAMA_CHUNK_CHARS = 60000
@@ -995,12 +1024,12 @@ class AdDetector:
         # Build Prompt (use default if None or empty in database)
         db_template = self.settings.get('summary_prompt_template')
         template = db_template if db_template else """
-        You are a smart assistant. Write a short 2-3 sentence summary of this podcast episode.
+        You are a smart assistant. Write a very short summary of this podcast episode.
         The summary must:
         1. NOT mention the podcast name, episode title, or date.
         2. DO NOT summarize anything relating to {targets}.
         3. Start immediately with "This episode includes".
-        4. Briefly summarize key topics.
+        4. Name only the one or two main topics.
         Transcript Context: {transcript_context}
         """
 
@@ -1013,10 +1042,11 @@ class AdDetector:
              prompt = template.format(transcript_context=text_data[:100000], targets=targets_text)
         except KeyError:
              prompt = template # Fallback
+        prompt += SUMMARY_LENGTH_RULE
         
         try:
             provider = self._get_provider()
-            return provider.generate(prompt).strip()
+            return limit_summary_words(provider.generate(prompt).strip())
         except Exception as e:
             # Do not return a canned summary here: the caller persists whatever
             # this returns, which would silently overwrite the real episode
