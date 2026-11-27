@@ -128,11 +128,11 @@ def init_db():
         UPDATE app_settings 
         SET summary_prompt_template = ?
         WHERE id = 1 AND (summary_prompt_template IS NULL OR summary_prompt_template = '')
-    """, ("""You are a smart assistant. Write a short 2-3 sentence summary of this podcast episode.
+    """, ("""You are a smart assistant. Write a very short summary of this podcast episode.
 The summary must:
 1. NOT mention the podcast name, episode title, or date.
 2. Start immediately with "This episode includes".
-3. Briefly summarize key topics.
+3. Name only the one or two main topics, in at most 40 words (15 seconds spoken).
 Transcript Context: {transcript_context}""",))
 
     # Discovery Cache Table
